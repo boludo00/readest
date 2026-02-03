@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
-import clsx from 'clsx';
 import { PiFlame } from 'react-icons/pi';
 import { useTranslation } from '@/hooks/useTranslation';
+import { getLocalDateString } from '@/utils/format';
+import { cn } from '@/utils/tailwind';
 
 interface StreakDisplayProps {
   currentStreak: number;
@@ -9,19 +10,14 @@ interface StreakDisplayProps {
   lastReadDate: string;
 }
 
-// Use local timezone to match statisticsStore date format
-const getDateString = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
-
 // Parse YYYY-MM-DD string as LOCAL date (not UTC)
 // new Date('2026-02-03') parses as UTC, causing timezone issues
 const parseDateString = (dateStr: string): Date => {
-  const [year, month, day] = dateStr.split('-').map(Number);
-  return new Date(year!, month! - 1, day);
+  const parts = dateStr.split('-').map(Number);
+  const year = parts[0] ?? 0;
+  const month = parts[1] ?? 1;
+  const day = parts[2] ?? 1;
+  return new Date(year, month - 1, day);
 };
 
 const StreakDisplay: React.FC<StreakDisplayProps> = ({
@@ -39,12 +35,12 @@ const StreakDisplay: React.FC<StreakDisplayProps> = ({
     const days = Array.from({ length: 7 }, (_, i) => {
       const date = new Date(now);
       date.setDate(date.getDate() - (6 - i));
-      return getDateString(date);
+      return getLocalDateString(date);
     });
 
     return {
-      today: getDateString(now),
-      yesterday: getDateString(yesterdayDate),
+      today: getLocalDateString(now),
+      yesterday: getLocalDateString(yesterdayDate),
       last7Days: days,
     };
   }, []);
@@ -55,7 +51,7 @@ const StreakDisplay: React.FC<StreakDisplayProps> = ({
 
   return (
     <div
-      className={clsx(
+      className={cn(
         'bg-base-200 rounded-xl p-4',
         hasActiveStreak && 'border-2 border-orange-400/30',
       )}
@@ -63,14 +59,14 @@ const StreakDisplay: React.FC<StreakDisplayProps> = ({
       <div className='flex items-center justify-between'>
         <div className='flex items-center gap-3'>
           <div
-            className={clsx(
+            className={cn(
               'flex h-12 w-12 items-center justify-center rounded-full',
               hasActiveStreak ? 'bg-orange-400/20' : 'bg-base-300',
             )}
           >
             <PiFlame
               size={28}
-              className={clsx(
+              className={cn(
                 hasActiveStreak ? 'text-orange-400' : 'text-base-content/40',
                 hasActiveStreak && 'animate-pulse',
               )}
@@ -107,7 +103,7 @@ const StreakDisplay: React.FC<StreakDisplayProps> = ({
             <div key={date} className='flex flex-col items-center gap-1'>
               <span className='text-base-content/50 text-xs'>{dayName}</span>
               <div
-                className={clsx(
+                className={cn(
                   'flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium transition-colors',
                   date === today && 'ring-primary ring-2 ring-offset-1',
                   isInStreak ? 'bg-orange-400 text-white' : 'bg-base-300 text-base-content/60',

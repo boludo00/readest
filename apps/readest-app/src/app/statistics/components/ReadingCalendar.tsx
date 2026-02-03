@@ -1,10 +1,10 @@
 'use client';
 
-import clsx from 'clsx';
 import { useState, useMemo } from 'react';
 import { useTranslation } from '@/hooks/useTranslation';
 import { DailyReadingSummary } from '@/types/statistics';
 import { getLocalDateString } from '@/utils/format';
+import { cn } from '@/utils/tailwind';
 
 interface ReadingCalendarProps {
   year: number;
@@ -17,7 +17,6 @@ interface DayCell {
   dayOfMonth: number;
   duration: number; // seconds
   isCurrentMonth: boolean;
-  isToday: boolean;
 }
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -25,12 +24,14 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const DAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
 // Get color intensity based on reading duration (in seconds)
+// Uses primary color for better theme compatibility
+// Higher opacity values for better visibility against various themes
 const getColorClass = (duration: number): string => {
-  if (duration === 0) return 'bg-base-300';
-  if (duration < 15 * 60) return 'bg-success/30'; // < 15 min
-  if (duration < 30 * 60) return 'bg-success/50'; // < 30 min
-  if (duration < 60 * 60) return 'bg-success/70'; // < 1 hour
-  return 'bg-success'; // 1+ hour
+  if (duration === 0) return 'bg-base-content/10'; // Very subtle for empty
+  if (duration < 15 * 60) return 'bg-primary/50'; // < 15 min - noticeable
+  if (duration < 30 * 60) return 'bg-primary/70'; // < 30 min
+  if (duration < 60 * 60) return 'bg-primary/85'; // < 1 hour
+  return 'bg-primary'; // 1+ hour - full color
 };
 
 const formatDuration = (seconds: number): string => {
@@ -46,8 +47,11 @@ const formatDuration = (seconds: number): string => {
 // Parse YYYY-MM-DD string as LOCAL date (not UTC)
 // new Date('2026-02-03') parses as UTC, causing timezone issues
 const parseDateString = (dateStr: string): Date => {
-  const [year, month, day] = dateStr.split('-').map(Number);
-  return new Date(year!, month! - 1, day);
+  const parts = dateStr.split('-').map(Number);
+  const year = parts[0] ?? 0;
+  const month = parts[1] ?? 1;
+  const day = parts[2] ?? 1;
+  return new Date(year, month - 1, day);
 };
 
 const generateCalendarData = (
@@ -55,7 +59,6 @@ const generateCalendarData = (
   dailySummaries: Record<string, DailyReadingSummary>,
 ): DayCell[][] => {
   const weeks: DayCell[][] = [];
-  const today = getLocalDateString();
 
   // Start from the first day of the year
   const startDate = new Date(year, 0, 1);
@@ -82,7 +85,6 @@ const generateCalendarData = (
       dayOfMonth: currentDate.getDate(),
       duration: summary?.totalDuration || 0,
       isCurrentMonth: isCurrentYear,
-      isToday: dateStr === today,
     });
 
     if (currentWeek.length === 7) {
@@ -112,8 +114,9 @@ const getMonthLabels = (weeks: DayCell[][]): { label: string; index: number }[] 
     const date = parseDateString(dayInYear.date);
     const month = date.getMonth();
 
-    if (month !== lastMonth && dayInYear.dayOfMonth <= 7) {
-      labels.push({ label: MONTHS[month]!, index: weekIndex });
+    const monthLabel = MONTHS[month];
+    if (month !== lastMonth && dayInYear.dayOfMonth <= 7 && monthLabel) {
+      labels.push({ label: monthLabel, index: weekIndex });
       lastMonth = month;
     }
   });
@@ -176,13 +179,13 @@ const ReadingCalendar: React.FC<ReadingCalendarProps> = ({
       </div>
 
       {/* Month labels */}
-      <div className='mb-1 flex'>
+      <div className='mb-3 flex'>
         <div className='w-6' /> {/* Spacer for day labels */}
-        <div className='relative flex-1'>
+        <div className='relative flex-1 h-4'>
           {monthLabels.map(({ label, index }) => (
             <span
               key={`${label}-${index}`}
-              className='text-base-content/50 absolute text-xs'
+              className='text-base-content/60 absolute text-[10px] font-medium'
               style={{ left: `${(index / weeks.length) * 100}%` }}
             >
               {label}
@@ -198,7 +201,7 @@ const ReadingCalendar: React.FC<ReadingCalendarProps> = ({
           {DAYS.map((day, i) => (
             <span
               key={i}
-              className={clsx(
+              className={cn(
                 'text-base-content/50 text-center text-xs',
                 i % 2 === 1 ? 'visible' : 'invisible',
               )}
@@ -215,10 +218,9 @@ const ReadingCalendar: React.FC<ReadingCalendarProps> = ({
               {week.map((day) => (
                 <div
                   key={day.date}
-                  className={clsx(
+                  className={cn(
                     'h-3 w-3 rounded-sm transition-colors',
                     getColorClass(day.duration),
-                    day.isToday && 'ring-primary ring-1 ring-offset-1',
                     !day.isCurrentMonth && 'opacity-30',
                     'hover:ring-base-content/30 cursor-pointer hover:ring-1',
                   )}
@@ -232,13 +234,13 @@ const ReadingCalendar: React.FC<ReadingCalendarProps> = ({
       </div>
 
       {/* Legend */}
-      <div className='mt-4 flex items-center justify-end gap-2'>
+      <div className='mt-4 flex items-center justify-end gap-1.5'>
         <span className='text-base-content/50 text-xs'>{_('Less')}</span>
-        <div className='bg-base-300 h-3 w-3 rounded-sm' />
-        <div className='bg-success/30 h-3 w-3 rounded-sm' />
-        <div className='bg-success/50 h-3 w-3 rounded-sm' />
-        <div className='bg-success/70 h-3 w-3 rounded-sm' />
-        <div className='bg-success h-3 w-3 rounded-sm' />
+        <div className='bg-base-content/10 h-3 w-3 rounded-sm' />
+        <div className='bg-primary/50 h-3 w-3 rounded-sm' />
+        <div className='bg-primary/70 h-3 w-3 rounded-sm' />
+        <div className='bg-primary/85 h-3 w-3 rounded-sm' />
+        <div className='bg-primary h-3 w-3 rounded-sm' />
         <span className='text-base-content/50 text-xs'>{_('More')}</span>
       </div>
 

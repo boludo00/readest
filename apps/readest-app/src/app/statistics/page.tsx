@@ -1,6 +1,6 @@
 'use client';
 
-import clsx from 'clsx';
+import { cn } from '@/utils/tailwind';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { OverlayScrollbarsComponent } from 'overlayscrollbars-react';
@@ -19,7 +19,8 @@ import StatsOverview from './components/StatsOverview';
 import StreakDisplay from './components/StreakDisplay';
 import ReadingCalendar from './components/ReadingCalendar';
 import TrendChart from './components/TrendChart';
-import TimeDistribution from './components/TimeDistribution';
+import ReadingTimeline from './components/ReadingTimeline';
+import AverageByHour from './components/AverageByHour';
 import BookStats from './components/BookStats';
 
 const StatisticsPage = () => {
@@ -27,7 +28,7 @@ const StatisticsPage = () => {
   const router = useRouter();
   const { envConfig, appService } = useEnv();
   const { safeAreaInsets, isRoundedWindow } = useThemeStore();
-  const { loadStatistics, saveStatistics, loaded, userStats, dailySummaries, bookStats } =
+  const { loadStatistics, saveStatistics, loaded, sessions, userStats, dailySummaries, bookStats } =
     useStatisticsStore();
 
   const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
@@ -66,7 +67,7 @@ const StatisticsPage = () => {
 
   return (
     <div
-      className={clsx(
+      className={cn(
         'statistics-page bg-base-100 full-height inset-0 flex select-none flex-col overflow-hidden',
         appService.hasRoundedWindow && isRoundedWindow && 'window-border rounded-window',
       )}
@@ -95,22 +96,28 @@ const StatisticsPage = () => {
             lastReadDate={userStats.lastReadDate}
           />
 
-          {/* Reading Calendar */}
+          {/* Reading Calendar (Heat Map) */}
           <ReadingCalendar
             year={calendarYear}
             dailySummaries={dailySummaries}
             onYearChange={setCalendarYear}
           />
 
-          {/* Charts Grid */}
-          <div className='grid gap-6 md:grid-cols-2'>
-            <TrendChart
-              dailySummaries={dailySummaries}
-              dateRange={trendRange}
-              onDateRangeChange={setTrendRange}
-            />
-            <TimeDistribution stats={userStats} />
-          </div>
+          {/* Reading Timeline */}
+          <ReadingTimeline sessions={sessions} />
+
+          {/* Reading Trend Chart */}
+          <TrendChart
+            dailySummaries={dailySummaries}
+            dateRange={trendRange}
+            onDateRangeChange={setTrendRange}
+          />
+
+          {/* Average Reading by Hour */}
+          <AverageByHour
+            readingByHour={userStats.readingByHour}
+            dailySummaries={dailySummaries}
+          />
 
           {/* Book Statistics */}
           <BookStats bookStats={bookStats} />

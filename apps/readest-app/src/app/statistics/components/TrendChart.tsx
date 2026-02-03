@@ -1,10 +1,19 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import clsx from 'clsx';
+import { useId, useMemo } from 'react';
+import {
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+} from 'recharts';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useThemeColors, withOpacity } from '@/hooks/useThemeColors';
 import { DailyReadingSummary } from '@/types/statistics';
 import { getLocalDateString } from '@/utils/format';
+import { cn } from '@/utils/tailwind';
 
 interface TrendChartProps {
   dailySummaries: Record<string, DailyReadingSummary>;
@@ -16,6 +25,11 @@ interface DataPoint {
   date: string;
   label: string;
   value: number;
+}
+
+interface CustomTooltipProps {
+  active?: boolean;
+  payload?: Array<{ payload: DataPoint }>;
 }
 
 const formatDuration = (seconds: number): string => {
@@ -97,69 +111,41 @@ const getDateRangeData = (
   return data;
 };
 
+const CustomTooltip: React.FC<CustomTooltipProps> = ({ active, payload }) => {
+  if (!active || !payload || !payload.length) return null;
+
+  const data = payload[0]?.payload;
+  if (!data) return null;
+
+  return (
+    <div className='bg-base-300 text-base-content rounded-lg px-3 py-2 shadow-lg border border-base-content/10'>
+      <p className='text-sm font-semibold mb-1'>{data.label}</p>
+      <p className='text-lg font-bold text-primary'>{formatDuration(data.value)}</p>
+    </div>
+  );
+};
+
 const TrendChart: React.FC<TrendChartProps> = ({
   dailySummaries,
   dateRange,
   onDateRangeChange,
 }) => {
   const _ = useTranslation();
-  const [hoveredPoint, setHoveredPoint] = useState<DataPoint | null>(null);
+  const themeColors = useThemeColors();
+  const gradientId = useId();
 
   const data = useMemo(
     () => getDateRangeData(dailySummaries, dateRange),
     [dailySummaries, dateRange],
   );
 
-  const maxValue = Math.max(...data.map((d) => d.value), 1);
-  const chartHeight = 120;
-  const chartWidth = 280;
-  const padding = { top: 10, right: 10, bottom: 30, left: 10 };
-
-  const points = data.map((d, i) => ({
-    ...d,
-    x: padding.left + (i / (data.length - 1 || 1)) * (chartWidth - padding.left - padding.right),
-    y: padding.top + (1 - d.value / maxValue) * (chartHeight - padding.top - padding.bottom),
-  }));
-
-  // Create smooth path using cardinal spline interpolation
-  const createPath = () => {
-    if (points.length < 2) return '';
-    const firstPoint = points[0];
-    if (!firstPoint) return '';
-
-    let path = `M ${firstPoint.x} ${firstPoint.y}`;
-
-    for (let i = 0; i < points.length - 1; i++) {
-      const p0 = points[Math.max(0, i - 1)]!;
-      const p1 = points[i]!;
-      const p2 = points[i + 1]!;
-      const p3 = points[Math.min(points.length - 1, i + 2)]!;
-
-      const tension = 0.3;
-      const cp1x = p1.x + ((p2.x - p0.x) * tension) / 3;
-      const cp1y = p1.y + ((p2.y - p0.y) * tension) / 3;
-      const cp2x = p2.x - ((p3.x - p1.x) * tension) / 3;
-      const cp2y = p2.y - ((p3.y - p1.y) * tension) / 3;
-
-      path += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
-    }
-
-    return path;
-  };
-
-  // Create area fill path
-  const createAreaPath = () => {
-    const linePath = createPath();
-    if (!linePath) return '';
-
-    const lastPoint = points[points.length - 1]!;
-    const firstPoint = points[0]!;
-    const bottom = chartHeight - padding.bottom;
-
-    return `${linePath} L ${lastPoint.x} ${bottom} L ${firstPoint.x} ${bottom} Z`;
-  };
-
-  const totalDuration = data.reduce((sum, d) => sum + d.value, 0);
+  const { totalDuration, maxValue } = useMemo(
+    () => ({
+      totalDuration: data.reduce((sum, d) => sum + d.value, 0),
+      maxValue: Math.max(...data.map((d) => d.value), 1),
+    }),
+    [data],
+  );
 
   return (
     <div className='bg-base-200 rounded-xl p-4'>
@@ -174,7 +160,7 @@ const TrendChart: React.FC<TrendChartProps> = ({
           {(['week', 'month', 'year'] as const).map((range) => (
             <button
               key={range}
-              className={clsx('btn btn-xs', dateRange === range ? 'btn-primary' : 'btn-ghost')}
+              className={cn('btn btn-xs', dateRange === range ? 'btn-primary' : 'btn-ghost')}
               onClick={() => onDateRangeChange?.(range)}
             >
               {range === 'week' ? _('Daily') : range === 'month' ? _('Weekly') : _('Monthly')}
@@ -183,95 +169,61 @@ const TrendChart: React.FC<TrendChartProps> = ({
         </div>
       </div>
 
-      <div className='relative'>
-        <svg
-          viewBox={`0 0 ${chartWidth} ${chartHeight}`}
-          className='w-full'
-          style={{ maxHeight: `${chartHeight}px` }}
-        >
-          {/* Grid lines */}
-          <g className='text-base-content/10'>
-            {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-              const y = padding.top + (1 - ratio) * (chartHeight - padding.top - padding.bottom);
-              return (
-                <line
-                  key={ratio}
-                  x1={padding.left}
-                  y1={y}
-                  x2={chartWidth - padding.right}
-                  y2={y}
-                  stroke='currentColor'
-                  strokeWidth={0.5}
-                  strokeDasharray={ratio > 0 && ratio < 1 ? '2,2' : undefined}
-                />
-              );
-            })}
-          </g>
-
-          {/* Area fill */}
-          <path d={createAreaPath()} className='fill-primary/20' />
-
-          {/* Line */}
-          <path
-            d={createPath()}
-            fill='none'
-            className='stroke-primary'
-            strokeWidth={2}
-            strokeLinecap='round'
-            strokeLinejoin='round'
-          />
-
-          {/* Data points */}
-          {points.map((point, i) => (
-            <g key={i}>
-              <circle
-                cx={point.x}
-                cy={point.y}
-                r={hoveredPoint?.date === point.date ? 5 : 3}
-                className={clsx(
-                  'transition-all',
-                  hoveredPoint?.date === point.date
-                    ? 'fill-primary'
-                    : 'fill-base-100 stroke-primary',
-                )}
-                strokeWidth={2}
-                onMouseEnter={() => setHoveredPoint(point)}
-                onMouseLeave={() => setHoveredPoint(null)}
-                style={{ cursor: 'pointer' }}
-              />
-            </g>
-          ))}
-
-          {/* X-axis labels */}
-          <g className='text-base-content/60'>
-            {points.map((point, i) => (
-              <text
-                key={i}
-                x={point.x}
-                y={chartHeight - 5}
-                textAnchor='middle'
-                fontSize={10}
-                fill='currentColor'
-              >
-                {point.label}
-              </text>
-            ))}
-          </g>
-        </svg>
-
-        {/* Tooltip */}
-        {hoveredPoint && (
-          <div
-            className='bg-base-300 text-base-content pointer-events-none absolute rounded px-2 py-1 text-xs shadow-lg'
-            style={{
-              left: `${((points.find((p) => p.date === hoveredPoint.date)?.x || 0) / chartWidth) * 100}%`,
-              top: `${(points.find((p) => p.date === hoveredPoint.date)?.y || 0) - 30}px`,
-              transform: 'translateX(-50%)',
-            }}
+      <div className='relative h-48'>
+        <ResponsiveContainer width='100%' height='100%'>
+          <AreaChart
+            data={data}
+            margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
           >
-            <div className='font-medium'>{formatDuration(hoveredPoint.value)}</div>
-          </div>
-        )}
+            <defs>
+              <linearGradient id={`gradient-${gradientId}`} x1='0' y1='0' x2='0' y2='1'>
+                <stop offset='5%' stopColor={themeColors.primary} stopOpacity={0.4} />
+                <stop offset='95%' stopColor={themeColors.primary} stopOpacity={0.05} />
+              </linearGradient>
+            </defs>
+            <XAxis
+              dataKey='label'
+              tick={{ fill: withOpacity(themeColors.baseContent, 0.6), fontSize: 12 }}
+              tickLine={false}
+              axisLine={{ stroke: withOpacity(themeColors.baseContent, 0.2) }}
+            />
+            <YAxis
+              tick={{ fill: withOpacity(themeColors.baseContent, 0.6), fontSize: 12 }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(value) => {
+                const hours = Math.floor(value / 3600);
+                if (hours > 0) return `${hours}h`;
+                const mins = Math.floor(value / 60);
+                return mins > 0 ? `${mins}m` : '';
+              }}
+              domain={[0, maxValue * 1.1]}
+            />
+            <Tooltip content={<CustomTooltip />} cursor={{ strokeDasharray: '3 3' }} />
+            <Area
+              type='monotone'
+              dataKey='value'
+              stroke={themeColors.primary}
+              strokeWidth={3}
+              fill={`url(#gradient-${gradientId})`}
+              animationDuration={1000}
+              animationEasing='ease-in-out'
+              dot={{
+                fill: themeColors.primary,
+                stroke: themeColors.base100,
+                strokeWidth: 2,
+                r: 4,
+              }}
+              activeDot={{
+                fill: themeColors.primary,
+                stroke: themeColors.base100,
+                strokeWidth: 2,
+                r: 6,
+                style: { cursor: 'pointer' },
+              }}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );
