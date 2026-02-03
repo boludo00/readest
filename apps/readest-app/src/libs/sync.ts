@@ -1,29 +1,36 @@
 import { Book, BookConfig, BookNote, BookDataRecord } from '@/types/book';
+import { ReadingSession, ReadingGoal } from '@/types/statistics';
 import { getAPIBaseUrl } from '@/services/environment';
 import { getAccessToken } from '@/utils/access';
 import { fetchWithTimeout } from '@/utils/fetch';
 
 const SYNC_API_ENDPOINT = getAPIBaseUrl() + '/sync';
 
-export type SyncType = 'books' | 'configs' | 'notes';
+export type SyncType = 'books' | 'configs' | 'notes' | 'sessions' | 'goals';
 export type SyncOp = 'push' | 'pull' | 'both';
 
 interface BookRecord extends BookDataRecord, Book {}
 interface BookConfigRecord extends BookDataRecord, BookConfig {}
 interface BookNoteRecord extends BookDataRecord, BookNote {}
+interface SessionRecord extends BookDataRecord, ReadingSession {}
+interface GoalRecord extends BookDataRecord, Omit<ReadingGoal, 'progress'> {}
 
 export interface SyncResult {
   books: BookRecord[] | null;
   notes: BookNoteRecord[] | null;
   configs: BookConfigRecord[] | null;
+  sessions: SessionRecord[] | null;
+  goals: GoalRecord[] | null;
 }
 
-export type SyncRecord = BookRecord & BookConfigRecord & BookNoteRecord;
+export type SyncRecord = BookRecord | BookConfigRecord | BookNoteRecord | SessionRecord | GoalRecord;
 
 export interface SyncData {
   books?: Partial<BookRecord>[];
   notes?: Partial<BookNoteRecord>[];
   configs?: Partial<BookConfigRecord>[];
+  sessions?: Partial<SessionRecord>[];
+  goals?: Partial<GoalRecord>[];
 }
 
 export class SyncClient {
@@ -86,5 +93,17 @@ export class SyncClient {
     }
 
     return res.json();
+  }
+
+  /**
+   * Check if the user is authenticated (has a valid token).
+   */
+  async isAuthenticated(): Promise<boolean> {
+    try {
+      const token = await getAccessToken();
+      return !!token;
+    } catch {
+      return false;
+    }
   }
 }

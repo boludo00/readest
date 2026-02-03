@@ -50,3 +50,38 @@ export interface DBBookNote {
   updated_at?: string;
   deleted_at?: string | null;
 }
+
+export interface DBReadingSession {
+  id: string;
+  user_id: string;
+  book_hash: string;
+  meta_hash?: string;
+
+  start_time: string;
+  end_time: string;
+  duration: number; // seconds
+
+  start_progress?: number;
+  end_progress?: number;
+  start_page?: number;
+  end_page?: number;
+  pages_read?: number;
+
+  created_at?: string;
+  updated_at?: string;
+  deleted_at?: string | null;
+}
+
+export interface DBReadingGoal {
+  id: string;
+  user_id: string;
+  type: string; // 'daily', 'weekly', 'monthly', 'yearly'
+  target: number;
+  unit: string; // 'minutes', 'pages', 'books'
+  start_date: string;
+  active: boolean;
+
+  created_at?: string;
+  updated_at?: string;
+  deleted_at?: string | null;
+}

@@ -3,24 +3,32 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PostgrestError } from '@supabase/supabase-js';
 import { createSupabaseClient } from '@/utils/supabase';
 import { BookDataRecord } from '@/types/book';
-import { transformBookConfigToDB } from '@/utils/transform';
-import { transformBookNoteToDB } from '@/utils/transform';
-import { transformBookToDB } from '@/utils/transform';
+import {
+  transformBookConfigToDB,
+  transformBookNoteToDB,
+  transformBookToDB,
+  transformSessionToDB,
+  transformGoalToDB,
+} from '@/utils/transform';
 import { runMiddleware, corsAllMethods } from '@/utils/cors';
 import { SyncData, SyncRecord, SyncResult, SyncType } from '@/libs/sync';
 import { validateUserAndToken } from '@/utils/access';
-import { DBBook, DBBookConfig } from '@/types/records';
+import { DBBook, DBBookConfig, DBReadingSession, DBReadingGoal } from '@/types/records';
 
 const transformsToDB = {
   books: transformBookToDB,
   book_notes: transformBookNoteToDB,
   book_configs: transformBookConfigToDB,
+  reading_sessions: transformSessionToDB,
+  reading_goals: transformGoalToDB,
 };
 
-const DBSyncTypeMap = {
+const DBSyncTypeMap: Record<string, string> = {
   books: 'books',
   book_notes: 'notes',
   book_configs: 'configs',
+  reading_sessions: 'sessions',
+  reading_goals: 'goals',
 };
 
 type TableName = keyof typeof transformsToDB;
@@ -52,11 +60,13 @@ export async function GET(req: NextRequest) {
   const sinceIso = since.toISOString();
 
   try {
-    const results: SyncResult = { books: [], configs: [], notes: [] };
+    const results: SyncResult = { books: [], configs: [], notes: [], sessions: [], goals: [] };
     const errors: Record<TableName, DBError | null> = {
       books: null,
       book_notes: null,
       book_configs: null,
+      reading_sessions: null,
+      reading_goals: null,
     };
 
     const queryTables = async (table: TableName, dedupeKeys?: (keyof BookDataRecord)[]) => {
@@ -113,7 +123,11 @@ export async function GET(req: NextRequest) {
           }
         });
       }
-      results[DBSyncTypeMap[table] as SyncType] = records || [];
+      const syncKey = DBSyncTypeMap[table];
+      if (syncKey) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (results as any)[syncKey] = records || [];
+      }
     };
 
     if (!typeParam || typeParam === 'books') {
@@ -145,6 +159,12 @@ export async function GET(req: NextRequest) {
     if (!typeParam || typeParam === 'notes') {
       await queryTables('book_notes', ['id']).catch((err) => (errors['book_notes'] = err));
     }
+    if (!typeParam || typeParam === 'sessions') {
+      await queryTables('reading_sessions', ['id']).catch((err) => (errors['reading_sessions'] = err));
+    }
+    if (!typeParam || typeParam === 'goals') {
+      await queryTables('reading_goals', ['id']).catch((err) => (errors['reading_goals'] = err));
+    }
 
     const dbErrors = Object.values(errors).filter((err) => err !== null);
     if (dbErrors.length > 0) {
@@ -174,7 +194,7 @@ export async function POST(req: NextRequest) {
   }
   const supabase = createSupabaseClient(token);
   const body = await req.json();
-  const { books = [], configs = [], notes = [] } = body as SyncData;
+  const { books = [], configs = [], notes = [], sessions = [], goals = [] } = body as SyncData;
 
   const BATCH_SIZE = 100;
   const upsertRecords = async (
@@ -194,7 +214,10 @@ export async function POST(req: NextRequest) {
       const dbRecords = batch.map((rec) => {
         const dbRec = transformsToDB[table](rec, user.id);
         rec.user_id = user.id;
-        rec.book_hash = dbRec.book_hash;
+        // Set book_hash only for tables that have it
+        if ('book_hash' in dbRec) {
+          rec.book_hash = (dbRec as { book_hash: string }).book_hash;
+        }
         return { original: rec, db: dbRec };
       });
 
@@ -232,8 +255,8 @@ export async function POST(req: NextRequest) {
       });
 
       // Separate into inserts and updates
-      const toInsert: (DBBook | DBBookConfig | DBBookConfig)[] = [];
-      const toUpdate: (DBBook | DBBookConfig | DBBookConfig)[] = [];
+      const toInsert: (DBBook | DBBookConfig | DBReadingSession | DBReadingGoal)[] = [];
+      const toUpdate: (DBBook | DBBookConfig | DBReadingSession | DBReadingGoal)[] = [];
       const batchAuthoritativeRecords: BookDataRecord[] = [];
 
       for (const { original, db: dbRec } of dbRecords) {
@@ -300,21 +323,27 @@ export async function POST(req: NextRequest) {
   };
 
   try {
-    const [booksResult, configsResult, notesResult] = await Promise.all([
+    const [booksResult, configsResult, notesResult, sessionsResult, goalsResult] = await Promise.all([
       upsertRecords('books', ['book_hash'], books as BookDataRecord[]),
       upsertRecords('book_configs', ['book_hash'], configs as BookDataRecord[]),
       upsertRecords('book_notes', ['book_hash', 'id'], notes as BookDataRecord[]),
+      upsertRecords('reading_sessions', ['id'], sessions as BookDataRecord[]),
+      upsertRecords('reading_goals', ['id'], goals as BookDataRecord[]),
     ]);
 
     if (booksResult?.error) throw new Error(booksResult.error);
     if (configsResult?.error) throw new Error(configsResult.error);
     if (notesResult?.error) throw new Error(notesResult.error);
+    if (sessionsResult?.error) throw new Error(sessionsResult.error);
+    if (goalsResult?.error) throw new Error(goalsResult.error);
 
     return NextResponse.json(
       {
         books: booksResult?.data || [],
         configs: configsResult?.data || [],
         notes: notesResult?.data || [],
+        sessions: sessionsResult?.data || [],
+        goals: goalsResult?.data || [],
       },
       { status: 200 },
     );

@@ -8,7 +8,8 @@ import {
   HighlightStyle,
   ReadingStatus,
 } from '@/types/book';
-import { DBBookConfig, DBBook, DBBookNote } from '@/types/records';
+import { ReadingSession, ReadingGoal } from '@/types/statistics';
+import { DBBookConfig, DBBook, DBBookNote, DBReadingSession, DBReadingGoal } from '@/types/records';
 import { sanitizeString } from './sanitize';
 
 export const transformBookConfigToDB = (bookConfig: unknown, userId: string): DBBookConfig => {
@@ -203,5 +204,71 @@ export const transformBookNoteFromDB = (dbBookNote: DBBookNote): BookNote => {
     createdAt: new Date(created_at!).getTime(),
     updatedAt: new Date(updated_at!).getTime(),
     deletedAt: deleted_at ? new Date(deleted_at).getTime() : null,
+  };
+};
+
+export const transformSessionToDB = (sessionData: unknown, userId: string): DBReadingSession => {
+  const session = sessionData as ReadingSession;
+  return {
+    id: session.id,
+    user_id: userId,
+    book_hash: session.bookHash,
+    meta_hash: session.metaHash,
+    start_time: new Date(session.startTime).toISOString(),
+    end_time: new Date(session.endTime).toISOString(),
+    duration: session.duration,
+    start_progress: session.startProgress,
+    end_progress: session.endProgress,
+    start_page: session.startPage,
+    end_page: session.endPage,
+    pages_read: session.pagesRead,
+    created_at: new Date(session.createdAt).toISOString(),
+    updated_at: new Date(session.updatedAt).toISOString(),
+  };
+};
+
+export const transformSessionFromDB = (dbSession: DBReadingSession): ReadingSession => {
+  return {
+    id: dbSession.id,
+    bookHash: dbSession.book_hash,
+    metaHash: dbSession.meta_hash,
+    startTime: new Date(dbSession.start_time).getTime(),
+    endTime: new Date(dbSession.end_time).getTime(),
+    duration: dbSession.duration,
+    startProgress: dbSession.start_progress ?? 0,
+    endProgress: dbSession.end_progress ?? 0,
+    startPage: dbSession.start_page ?? 0,
+    endPage: dbSession.end_page ?? 0,
+    pagesRead: dbSession.pages_read ?? 0,
+    createdAt: new Date(dbSession.created_at!).getTime(),
+    updatedAt: new Date(dbSession.updated_at!).getTime(),
+  };
+};
+
+export const transformGoalToDB = (goalData: unknown, userId: string): DBReadingGoal => {
+  const goal = goalData as ReadingGoal;
+  return {
+    id: goal.id,
+    user_id: userId,
+    type: goal.type,
+    target: goal.target,
+    unit: goal.unit,
+    start_date: goal.startDate,
+    active: goal.active,
+    created_at: new Date(goal.createdAt).toISOString(),
+    updated_at: new Date(goal.createdAt).toISOString(), // Use createdAt as initial updatedAt
+  };
+};
+
+export const transformGoalFromDB = (dbGoal: DBReadingGoal): ReadingGoal => {
+  return {
+    id: dbGoal.id,
+    type: dbGoal.type as 'daily' | 'weekly' | 'monthly' | 'yearly',
+    target: dbGoal.target,
+    unit: dbGoal.unit as 'minutes' | 'pages' | 'books',
+    progress: 0, // Progress is computed client-side
+    startDate: dbGoal.start_date,
+    active: dbGoal.active,
+    createdAt: new Date(dbGoal.created_at!).getTime(),
   };
 };

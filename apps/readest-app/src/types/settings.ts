@@ -87,6 +87,8 @@ export interface SystemSettings {
   lastSyncedAtBooks: number;
   lastSyncedAtConfigs: number;
   lastSyncedAtNotes: number;
+  lastSyncedAtSessions: number;
+  lastSyncedAtGoals: number;
 
   migrationVersion: number;
 

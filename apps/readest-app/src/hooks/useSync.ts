@@ -58,6 +58,8 @@ export function useSync(bookKey?: string) {
     books: null,
     configs: null,
     notes: null,
+    sessions: null,
+    goals: null,
   });
   const [syncedBooks, setSyncedBooks] = useState<Book[] | null>(null);
   const [syncedConfigs, setSyncedConfigs] = useState<BookConfig[] | null>(null);
