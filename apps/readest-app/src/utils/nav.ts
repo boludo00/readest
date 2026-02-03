@@ -108,3 +108,7 @@ export const navigateToUpdatePassword = (router: ReturnType<typeof useRouter>) =
   const currentPath = pathname !== '/auth' ? pathname + search : '/';
   router.push(`/auth/update?redirect=${encodeURIComponent(currentPath)}`);
 };
+
+export const navigateToStatistics = (router: ReturnType<typeof useRouter>) => {
+  router.push('/statistics');
+};
