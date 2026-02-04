@@ -2,7 +2,7 @@ import clsx from 'clsx';
 import React, { useCallback, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { FaSearch } from 'react-icons/fa';
-import { PiPlus } from 'react-icons/pi';
+import { PiPlus, PiChartBar } from 'react-icons/pi';
 import { PiSelectionAll, PiSelectionAllFill } from 'react-icons/pi';
 import { PiDotsThreeCircle } from 'react-icons/pi';
 import { MdOutlineMenu } from 'react-icons/md';
@@ -195,6 +195,16 @@ const LibraryHeader: React.FC<LibraryHeaderProps> = ({
           </div>
         ) : (
           <div className='flex h-full items-center gap-x-2 sm:gap-x-4'>
+            {isMobile ? null : (
+              <button
+                onClick={() => router.push('/statistics')}
+                className='btn btn-ghost h-8 min-h-8 w-8 p-0'
+                aria-label={_('Reading Statistics')}
+                title={_('Reading Statistics')}
+              >
+                <PiChartBar role='none' size={iconSize18} />
+              </button>
+            )}
             <Dropdown
               label={_('View Menu')}
               className='exclude-title-bar-mousedown dropdown-bottom dropdown-end'
