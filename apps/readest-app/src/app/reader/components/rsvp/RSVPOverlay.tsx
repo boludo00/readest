@@ -5,6 +5,8 @@ import clsx from 'clsx';
 import { RsvpState, RsvpWord, RSVPController } from '@/services/rsvp';
 import { useThemeStore } from '@/store/themeStore';
 import { TOCItem } from '@/libs/document';
+import { Insets } from '@/types/misc';
+import { useEnv } from '@/context/EnvContext';
 import {
   IoClose,
   IoPlay,
@@ -29,6 +31,7 @@ interface RSVPOverlayProps {
   onClose: () => void;
   onChapterSelect: (href: string) => void;
   onRequestNextPage: () => void;
+  gridInsets: Insets;
 }
 
 const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
@@ -38,8 +41,10 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
   onClose,
   onChapterSelect,
   onRequestNextPage,
+  gridInsets,
 }) => {
   const _ = useTranslation();
+  const { appService } = useEnv();
   const { themeCode, isDarkMode: _isDarkMode } = useThemeStore();
   const [state, setState] = useState<RsvpState>(controller.currentState);
   const [currentWord, setCurrentWord] = useState<RsvpWord | null>(controller.currentWord);
@@ -306,7 +311,10 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       onTouchEnd={handleTouchEnd}
     >
       {/* Header */}
-      <div className='rsvp-header flex shrink-0 items-center justify-between gap-2 p-3 md:gap-4 md:p-4'>
+      <div
+        className='rsvp-header flex shrink-0 items-center justify-between gap-2 p-3 md:gap-4 md:p-4'
+        style={{ paddingTop: appService?.hasSafeAreaInset ? `${gridInsets.top}px` : undefined }}
+      >
         <button
           aria-label={_('Close Speed Reading')}
           className='flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full border-none bg-transparent transition-colors hover:bg-gray-500/20 md:h-11 md:w-11'
@@ -441,7 +449,12 @@ const RSVPOverlay: React.FC<RSVPOverlayProps> = ({
       </div>
 
       {/* Footer */}
-      <div className='rsvp-controls shrink-0 px-3 pb-6 pt-3 md:px-4 md:pb-8 md:pt-4'>
+      <div
+        className='rsvp-controls shrink-0 px-3 pb-6 pt-3 md:px-4 md:pb-8 md:pt-4'
+        style={{
+          paddingBottom: appService?.hasSafeAreaInset ? `${gridInsets.bottom}px` : undefined,
+        }}
+      >
         {/* Progress section */}
         <div className='mb-3 flex flex-col gap-1.5 md:mb-4 md:gap-2'>
           <div className='flex flex-col gap-1 text-xs sm:flex-row sm:items-center sm:justify-between'>

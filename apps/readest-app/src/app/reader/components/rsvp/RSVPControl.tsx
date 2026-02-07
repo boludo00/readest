@@ -9,11 +9,13 @@ import { RSVPController, RsvpStartChoice, RsvpStopPosition } from '@/services/rs
 import { eventDispatcher } from '@/utils/event';
 import { useTranslation } from '@/hooks/useTranslation';
 import { BookNote } from '@/types/book';
+import { Insets } from '@/types/misc';
 import RSVPOverlay from './RSVPOverlay';
 import RSVPStartDialog from './RSVPStartDialog';
 
 interface RSVPControlProps {
   bookKey: string;
+  gridInsets: Insets;
 }
 
 // Helper to expand a range to include the full sentence
@@ -99,7 +101,7 @@ const expandRangeToSentence = (range: Range, doc: Document): Range => {
   return range;
 };
 
-const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey }) => {
+const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
   const _ = useTranslation();
   const {
     getView,
@@ -467,6 +469,7 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey }) => {
             onClose={handleClose}
             onChapterSelect={handleChapterSelect}
             onRequestNextPage={handleRequestNextPage}
+            gridInsets={gridInsets}
           />,
           portalContainer,
         )}
