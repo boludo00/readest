@@ -16,12 +16,34 @@ export function clearLastSources(): void {
   lastSources = [];
 }
 
-interface TauriAdapterOptions {
+export interface TauriAdapterOptions {
   settings: AISettings;
   bookHash: string;
   bookTitle: string;
   authorName: string;
   currentPage: number;
+  totalPages?: number;
+  currentChapter?: string;
+}
+
+/**
+ * Detect if a query is a broad recap/summary request that needs more context.
+ * These queries benefit from fetching more chunks across the entire read portion.
+ */
+function isRecapQuery(query: string): boolean {
+  const recapPatterns = [
+    /\brecap\b/i,
+    /\bsummar(y|ize|ise)\b/i,
+    /\bwhat('s| has| have)?\s+(happened|going on)\b/i,
+    /\bso far\b/i,
+    /\beverything\s+(that|we)\b/i,
+    /\bx[- ]?ray\b/i,
+    /\bcharacter(s)?\s+(list|breakdown|overview)\b/i,
+    /\bquiz\s+me\b/i,
+    /\bbreak(down| it down)\b/i,
+    /\bwhat just happened\b/i,
+  ];
+  return recapPatterns.some((p) => p.test(query));
 }
 
 async function* streamViaApiRoute(
@@ -61,7 +83,15 @@ export function createTauriAdapter(getOptions: () => TauriAdapterOptions): ChatM
   return {
     async *run({ messages, abortSignal }): AsyncGenerator<ChatModelRunResult> {
       const options = getOptions();
-      const { settings, bookHash, bookTitle, authorName, currentPage } = options;
+      const {
+        settings,
+        bookHash,
+        bookTitle,
+        authorName,
+        currentPage,
+        totalPages,
+        currentChapter,
+      } = options;
       const provider = getAIProvider(settings);
       let chunks: ScoredChunk[] = [];
 
@@ -76,11 +106,17 @@ export function createTauriAdapter(getOptions: () => TauriAdapterOptions): ChatM
 
       if (await isBookIndexed(bookHash)) {
         try {
+          // For recap/summary queries, fetch more chunks to provide broader coverage
+          const baseChunkCount = settings.maxContextChunks || 5;
+          const chunkCount = isRecapQuery(query)
+            ? Math.min(baseChunkCount * 3, 30)
+            : baseChunkCount;
+
           chunks = await hybridSearch(
             bookHash,
             query,
             settings,
-            settings.maxContextChunks || 5,
+            chunkCount,
             settings.spoilerProtection ? currentPage : undefined,
           );
           aiLogger.chat.context(chunks.length, chunks.map((c) => c.text).join('').length);
@@ -93,7 +129,14 @@ export function createTauriAdapter(getOptions: () => TauriAdapterOptions): ChatM
         lastSources = [];
       }
 
-      const systemPrompt = buildSystemPrompt(bookTitle, authorName, chunks, currentPage);
+      const systemPrompt = buildSystemPrompt(
+        bookTitle,
+        authorName,
+        chunks,
+        currentPage,
+        totalPages,
+        currentChapter,
+      );
 
       const aiMessages = messages.map((m) => ({
         role: m.role as 'user' | 'assistant',

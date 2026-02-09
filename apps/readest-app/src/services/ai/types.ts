@@ -89,3 +89,34 @@ export interface AIMessage {
   content: string;
   createdAt: number;
 }
+
+// types for the reading companion quick actions
+export type CompanionAction = 'recap' | 'xray' | 'simplify' | 'explain' | 'quiz';
+
+export interface CompanionActionConfig {
+  id: CompanionAction;
+  label: string;
+  icon: string;
+  prompt: string;
+  description: string;
+}
+
+// X-ray entity extracted from book content
+export interface XRayEntity {
+  name: string;
+  type: 'character' | 'place' | 'concept' | 'term';
+  firstSeenPage: number;
+  lastSeenPage: number;
+  mentionCount: number;
+  description: string;
+  aliases: string[];
+}
+
+// Spoiler boundary context passed to the prompt builder
+export interface SpoilerBoundary {
+  currentPage: number;
+  totalPages: number;
+  currentChapter: string;
+  currentSection: string;
+  readPercentage: number;
+}

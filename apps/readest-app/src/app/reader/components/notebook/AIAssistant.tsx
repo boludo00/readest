@@ -22,8 +22,15 @@ import {
   createTauriAdapter,
   getLastSources,
   clearLastSources,
+  buildActionPrompt,
 } from '@/services/ai';
-import type { EmbeddingProgress, AISettings, AIMessage } from '@/services/ai/types';
+import type {
+  EmbeddingProgress,
+  AISettings,
+  AIMessage,
+  CompanionAction,
+} from '@/services/ai/types';
+import type { TauriAdapterOptions } from '@/services/ai/adapters/TauriChatAdapter';
 import { useEnv } from '@/context/EnvContext';
 
 import { Button } from '@/components/ui/button';
@@ -75,6 +82,8 @@ const AIAssistantChat = ({
   bookTitle,
   authorName,
   currentPage,
+  totalPages,
+  currentChapter,
   onResetIndex,
 }: {
   aiSettings: AISettings;
@@ -82,6 +91,8 @@ const AIAssistantChat = ({
   bookTitle: string;
   authorName: string;
   currentPage: number;
+  totalPages?: number;
+  currentChapter?: string;
   onResetIndex: () => void;
 }) => {
   const {
@@ -92,12 +103,14 @@ const AIAssistantChat = ({
   } = useAIChatStore();
 
   // use a ref to keep up-to-date options without triggering re-renders of the runtime
-  const optionsRef = useRef({
+  const optionsRef = useRef<TauriAdapterOptions>({
     settings: aiSettings,
     bookHash,
     bookTitle,
     authorName,
     currentPage,
+    totalPages,
+    currentChapter,
   });
 
   // update ref on every render with latest values
@@ -108,6 +121,8 @@ const AIAssistantChat = ({
       bookTitle,
       authorName,
       currentPage,
+      totalPages,
+      currentChapter,
     };
   });
 
@@ -160,6 +175,9 @@ const AIAssistantChat = ({
       onResetIndex={onResetIndex}
       isLoadingHistory={isLoadingHistory}
       hasActiveConversation={!!activeConversationId}
+      currentPage={currentPage}
+      currentChapter={currentChapter}
+      totalPages={totalPages}
     />
   );
 };
@@ -170,12 +188,18 @@ const AIAssistantWithRuntime = ({
   onResetIndex,
   isLoadingHistory,
   hasActiveConversation,
+  currentPage,
+  currentChapter,
+  totalPages,
 }: {
   adapter: NonNullable<ReturnType<typeof createTauriAdapter>>;
   historyAdapter?: ThreadHistoryAdapter;
   onResetIndex: () => void;
   isLoadingHistory: boolean;
   hasActiveConversation: boolean;
+  currentPage: number;
+  currentChapter?: string;
+  totalPages?: number;
 }) => {
   const runtime = useLocalRuntime(adapter, {
     adapters: historyAdapter ? { history: historyAdapter } : undefined,
@@ -189,6 +213,9 @@ const AIAssistantWithRuntime = ({
         onResetIndex={onResetIndex}
         isLoadingHistory={isLoadingHistory}
         hasActiveConversation={hasActiveConversation}
+        currentPage={currentPage}
+        currentChapter={currentChapter}
+        totalPages={totalPages}
       />
     </AssistantRuntimeProvider>
   );
@@ -198,10 +225,16 @@ const ThreadWrapper = ({
   onResetIndex,
   isLoadingHistory,
   hasActiveConversation,
+  currentPage,
+  currentChapter,
+  totalPages,
 }: {
   onResetIndex: () => void;
   isLoadingHistory: boolean;
   hasActiveConversation: boolean;
+  currentPage: number;
+  currentChapter?: string;
+  totalPages?: number;
 }) => {
   const [sources, setSources] = useState(getLastSources());
   const assistantRuntime = useAssistantRuntime();
@@ -221,13 +254,31 @@ const ThreadWrapper = ({
     assistantRuntime.switchToNewThread();
   }, [assistantRuntime, setActiveConversation]);
 
+  const handleQuickAction = useCallback(
+    (action: CompanionAction) => {
+      const prompt = buildActionPrompt(action, currentPage, currentChapter);
+      if (prompt) {
+        assistantRuntime.thread.append({
+          role: 'user',
+          content: [{ type: 'text', text: prompt }],
+        });
+      }
+    },
+    [assistantRuntime, currentPage, currentChapter],
+  );
+
+  const readProgress = totalPages ? Math.round((currentPage / totalPages) * 100) : undefined;
+
   return (
     <Thread
       sources={sources}
       onClear={handleClear}
       onResetIndex={onResetIndex}
+      onQuickAction={handleQuickAction}
       isLoadingHistory={isLoadingHistory}
       hasActiveConversation={hasActiveConversation}
+      currentChapter={currentChapter}
+      readProgress={readProgress}
     />
   );
 };
@@ -250,6 +301,8 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
   const bookTitle = bookData?.book?.title || 'Unknown';
   const authorName = bookData?.book?.author || '';
   const currentPage = progress?.pageinfo?.current ?? 0;
+  const totalPages = progress?.pageinfo?.total ?? undefined;
+  const currentChapter = progress?.sectionLabel ?? undefined;
   const aiSettings = settings?.aiSettings;
 
   // check if book is indexed on mount
@@ -317,7 +370,7 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
         <div>
           <h3 className='text-foreground mb-0.5 text-sm font-medium'>{_('Index This Book')}</h3>
           <p className='text-muted-foreground text-xs'>
-            {_('Enable AI search and chat for this book')}
+            {_('Enable your reading companion for this book')}
           </p>
         </div>
         <Button onClick={handleIndex} size='sm' className='h-8 text-xs'>
@@ -357,6 +410,8 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
       bookTitle={bookTitle}
       authorName={authorName}
       currentPage={currentPage}
+      totalPages={totalPages}
+      currentChapter={currentChapter}
       onResetIndex={handleResetIndex}
     />
   );

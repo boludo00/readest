@@ -24,6 +24,11 @@ import {
   RefreshCwIcon,
   SquareIcon,
   Trash2Icon,
+  BookMarkedIcon,
+  ScanSearchIcon,
+  SparklesIcon,
+  HelpCircleIcon,
+  BrainCircuitIcon,
 } from 'lucide-react';
 
 import { MarkdownText } from './MarkdownText';
@@ -34,14 +39,17 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/utils/tailwind';
-import type { ScoredChunk } from '@/services/ai/types';
+import type { ScoredChunk, CompanionAction } from '@/services/ai/types';
 
 interface ThreadProps {
   sources?: ScoredChunk[];
   onClear?: () => void;
   onResetIndex?: () => void;
+  onQuickAction?: (action: CompanionAction) => void;
   isLoadingHistory?: boolean;
   hasActiveConversation?: boolean;
+  currentChapter?: string;
+  readProgress?: number;
 }
 
 const LoadingOverlay: FC<{ isVisible: boolean }> = ({ isVisible }) => {
@@ -99,12 +107,83 @@ const ScrollToBottomButton: FC = () => {
   );
 };
 
+const QUICK_ACTIONS: {
+  id: CompanionAction;
+  label: string;
+  description: string;
+  icon: FC<{ className?: string }>;
+}[] = [
+  {
+    id: 'recap',
+    label: 'Recap',
+    description: 'Summarize the story so far',
+    icon: BookMarkedIcon,
+  },
+  {
+    id: 'xray',
+    label: 'X-Ray',
+    description: 'Characters, places & terms',
+    icon: ScanSearchIcon,
+  },
+  {
+    id: 'simplify',
+    label: 'Simplify',
+    description: 'Break down complex passages',
+    icon: SparklesIcon,
+  },
+  {
+    id: 'explain',
+    label: 'Explain',
+    description: 'Help me understand this',
+    icon: HelpCircleIcon,
+  },
+  {
+    id: 'quiz',
+    label: 'Quiz Me',
+    description: 'Test my understanding',
+    icon: BrainCircuitIcon,
+  },
+];
+
+interface QuickActionsProps {
+  onAction: (action: CompanionAction) => void;
+}
+
+const QuickActions: FC<QuickActionsProps> = ({ onAction }) => {
+  return (
+    <div className='flex flex-wrap justify-center gap-1.5 px-2'>
+      {QUICK_ACTIONS.map(({ id, label, description, icon: Icon }) => (
+        <button
+          key={id}
+          type='button'
+          onClick={() => onAction(id)}
+          className={cn(
+            'group/action flex items-center gap-1.5 rounded-xl px-3 py-1.5',
+            'border-base-content/10 border',
+            'bg-base-200/50 hover:bg-base-200',
+            'text-base-content/70 hover:text-base-content',
+            'transition-all duration-200',
+            'active:scale-[0.97]',
+          )}
+          title={description}
+        >
+          <Icon className='size-3.5' />
+          <span className='text-xs font-medium'>{label}</span>
+        </button>
+      ))}
+    </div>
+  );
+};
+
 export const Thread: FC<ThreadProps> = ({
   sources = [],
   onClear,
   onResetIndex,
+  onQuickAction,
   isLoadingHistory = false,
   hasActiveConversation = false,
+  currentChapter,
+  readProgress,
 }) => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const isInitialMount = useRef(true);
@@ -164,13 +243,29 @@ export const Thread: FC<ThreadProps> = ({
       {!hasActiveConversation && (
         <ThreadPrimitive.Empty>
           <div className='animate-in fade-in flex h-full flex-col items-center justify-center duration-300'>
-            <div className='bg-base-content/10 mb-4 rounded-full p-3'>
+            <div className='bg-base-content/10 mb-3 rounded-full p-3'>
               <BookOpenIcon className='text-base-content size-6' />
             </div>
-            <h3 className='text-base-content mb-1 text-sm font-medium'>Ask about this book</h3>
-            <p className='text-base-content/60 mb-4 text-xs'>
-              Get answers based on the book content
+            <h3 className='text-base-content mb-0.5 text-sm font-medium'>
+              Your Reading Companion
+            </h3>
+            <p className='text-base-content/60 mb-1 max-w-[240px] text-center text-xs'>
+              I can recap the story, explain passages, track characters, and help you understand
+              what you&apos;re reading.
             </p>
+            {currentChapter && (
+              <p className='text-base-content/40 mb-3 text-[10px]'>
+                Currently reading: {currentChapter}
+                {readProgress !== undefined && ` (${readProgress}%)`}
+              </p>
+            )}
+
+            {onQuickAction && (
+              <div className='mb-4'>
+                <QuickActions onAction={onQuickAction} />
+              </div>
+            )}
+
             <Composer onClear={onClear} onResetIndex={onResetIndex} />
           </div>
         </ThreadPrimitive.Empty>
@@ -207,7 +302,12 @@ export const Thread: FC<ThreadProps> = ({
           <ScrollToBottomButton />
         </div>
 
-        <Composer onClear={onClear} onResetIndex={onResetIndex} />
+        <div className='flex flex-col gap-1.5 pb-0.5'>
+          {onQuickAction && (
+            <QuickActions onAction={onQuickAction} />
+          )}
+          <Composer onClear={onClear} onResetIndex={onResetIndex} />
+        </div>
       </AssistantIf>
     </ThreadPrimitive.Root>
   );
