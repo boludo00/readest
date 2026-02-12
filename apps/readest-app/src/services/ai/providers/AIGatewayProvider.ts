@@ -44,6 +44,10 @@ export class AIGatewayProvider implements AIProvider {
     return this.gateway.embeddingModel(embedModel);
   }
 
+  supportsEmbeddings(): boolean {
+    return true;
+  }
+
   async isAvailable(): Promise<boolean> {
     return !!this.settings.aiGatewayApiKey;
   }

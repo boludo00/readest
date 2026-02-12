@@ -22,6 +22,8 @@ import { NOTE_PREFIX } from '@/types/view';
 import useShortcuts from '@/hooks/useShortcuts';
 import BooknoteItem from '../sidebar/BooknoteItem';
 import AIAssistant from './AIAssistant';
+import XRayBrowser from './XRayBrowser';
+import RecapView from './RecapView';
 import NotebookHeader from './Header';
 import NoteEditor from './NoteEditor';
 import SearchBar from './SearchBar';
@@ -104,7 +106,7 @@ const Notebook: React.FC = ({}) => {
     saveSysSettings(envConfig, 'globalReadSettings', newGlobalReadSettings);
   };
 
-  const handleTabChange = (tab: 'notes' | 'ai') => {
+  const handleTabChange = (tab: 'notes' | 'ai' | 'xray' | 'recap') => {
     setNotebookActiveTab(tab);
     const globalReadSettings = settings.globalReadSettings;
     const newGlobalReadSettings = { ...globalReadSettings, notebookActiveTab: tab };
@@ -306,6 +308,14 @@ const Notebook: React.FC = ({}) => {
         {notebookActiveTab === 'ai' ? (
           <div className='flex min-h-0 flex-1 flex-col'>
             <AIAssistant key={activeConversationId ?? 'new'} bookKey={sideBarBookKey} />
+          </div>
+        ) : notebookActiveTab === 'xray' ? (
+          <div className='flex min-h-0 flex-1 flex-col'>
+            <XRayBrowser bookKey={sideBarBookKey} />
+          </div>
+        ) : notebookActiveTab === 'recap' ? (
+          <div className='flex min-h-0 flex-1 flex-col'>
+            <RecapView bookKey={sideBarBookKey} />
           </div>
         ) : (
           <div className='flex-grow overflow-y-auto px-3'>

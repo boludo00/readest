@@ -1,16 +1,28 @@
-import { TextChunk, ScoredChunk, BookIndexMeta, AIConversation, AIMessage } from '../types';
+import {
+  TextChunk,
+  ScoredChunk,
+  BookIndexMeta,
+  AIConversation,
+  AIMessage,
+  BookEntity,
+  BookEntityIndex,
+  BookRecap,
+} from '../types';
 import { aiLogger } from '../logger';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const lunr = require('lunr') as typeof import('lunr');
 
 const DB_NAME = 'readest-ai';
-const DB_VERSION = 3;
+const DB_VERSION = 6;
 const CHUNKS_STORE = 'chunks';
 const META_STORE = 'bookMeta';
 const BM25_STORE = 'bm25Indices';
 const CONVERSATIONS_STORE = 'conversations';
 const MESSAGES_STORE = 'messages';
+const ENTITIES_STORE = 'entities';
+const ENTITY_INDEX_STORE = 'entityIndex';
+const RECAPS_STORE = 'recaps';
 
 function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
@@ -32,6 +44,9 @@ class AIStore {
   private indexCache = new Map<string, lunr.Index>();
   private metaCache = new Map<string, BookIndexMeta>();
   private conversationCache = new Map<string, AIConversation[]>();
+  private entityCache = new Map<string, BookEntity[]>();
+  private entityIndexCache = new Map<string, BookEntityIndex>();
+  private recapCache = new Map<string, BookRecap[]>();
 
   async recoverFromError(): Promise<void> {
     if (this.db) {
@@ -46,6 +61,9 @@ class AIStore {
     this.indexCache.clear();
     this.metaCache.clear();
     this.conversationCache.clear();
+    this.entityCache.clear();
+    this.entityIndexCache.clear();
+    this.recapCache.clear();
     await this.openDB();
   }
 
@@ -90,6 +108,23 @@ class AIStore {
         if (!db.objectStoreNames.contains(MESSAGES_STORE)) {
           const msgStore = db.createObjectStore(MESSAGES_STORE, { keyPath: 'id' });
           msgStore.createIndex('conversationId', 'conversationId', { unique: false });
+        }
+
+        // v4: entity + recap stores
+        if (!db.objectStoreNames.contains(ENTITIES_STORE)) {
+          const entStore = db.createObjectStore(ENTITIES_STORE, { keyPath: 'id' });
+          entStore.createIndex('bookHash', 'bookHash', { unique: false });
+        }
+        if (!db.objectStoreNames.contains(ENTITY_INDEX_STORE)) {
+          db.createObjectStore(ENTITY_INDEX_STORE, { keyPath: 'bookHash' });
+        }
+        // v6: recreate recaps store with id-based key for history support
+        if (db.objectStoreNames.contains(RECAPS_STORE)) {
+          db.deleteObjectStore(RECAPS_STORE);
+        }
+        {
+          const recapStore = db.createObjectStore(RECAPS_STORE, { keyPath: 'id' });
+          recapStore.createIndex('bookHash', 'bookHash', { unique: false });
         }
       };
     });
@@ -306,21 +341,57 @@ class AIStore {
   async clearBook(bookHash: string): Promise<void> {
     const db = await this.openDB();
     return new Promise((resolve, reject) => {
-      const tx = db.transaction([CHUNKS_STORE, META_STORE, BM25_STORE], 'readwrite');
-      const cursor = tx.objectStore(CHUNKS_STORE).index('bookHash').openCursor(bookHash);
-      cursor.onsuccess = (e) => {
+      const stores = [
+        CHUNKS_STORE,
+        META_STORE,
+        BM25_STORE,
+        ENTITIES_STORE,
+        ENTITY_INDEX_STORE,
+        RECAPS_STORE,
+      ];
+      const tx = db.transaction(stores, 'readwrite');
+
+      // clear chunks by bookHash index
+      const chunkCursor = tx.objectStore(CHUNKS_STORE).index('bookHash').openCursor(bookHash);
+      chunkCursor.onsuccess = (e) => {
         const c = (e.target as IDBRequest<IDBCursorWithValue>).result;
         if (c) {
           c.delete();
           c.continue();
         }
       };
+
+      // clear entities by bookHash index
+      const entityCursor = tx.objectStore(ENTITIES_STORE).index('bookHash').openCursor(bookHash);
+      entityCursor.onsuccess = (e) => {
+        const c = (e.target as IDBRequest<IDBCursorWithValue>).result;
+        if (c) {
+          c.delete();
+          c.continue();
+        }
+      };
+
+      // clear recaps by bookHash index
+      const recapCursor = tx.objectStore(RECAPS_STORE).index('bookHash').openCursor(bookHash);
+      recapCursor.onsuccess = (e) => {
+        const c = (e.target as IDBRequest<IDBCursorWithValue>).result;
+        if (c) {
+          c.delete();
+          c.continue();
+        }
+      };
+
       tx.objectStore(META_STORE).delete(bookHash);
       tx.objectStore(BM25_STORE).delete(bookHash);
+      tx.objectStore(ENTITY_INDEX_STORE).delete(bookHash);
+
       tx.oncomplete = () => {
         this.chunkCache.delete(bookHash);
         this.indexCache.delete(bookHash);
         this.metaCache.delete(bookHash);
+        this.entityCache.delete(bookHash);
+        this.entityIndexCache.delete(bookHash);
+        this.recapCache.delete(bookHash);
         resolve();
       };
       tx.onerror = () => reject(tx.error);
@@ -448,6 +519,159 @@ class AIStore {
       };
       req.onerror = () => reject(req.error);
     });
+  }
+
+  // --- Entity methods ---
+
+  async saveEntities(entities: BookEntity[]): Promise<void> {
+    if (entities.length === 0) return;
+    const bookHash = entities[0]!.bookHash;
+    const db = await this.openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(ENTITIES_STORE, 'readwrite');
+      const store = tx.objectStore(ENTITIES_STORE);
+      for (const entity of entities) store.put(entity);
+      tx.oncomplete = () => {
+        this.entityCache.set(bookHash, entities);
+        resolve();
+      };
+      tx.onerror = () => {
+        aiLogger.store.error('saveEntities', tx.error?.message || 'TX error');
+        reject(tx.error);
+      };
+    });
+  }
+
+  async getEntities(bookHash: string): Promise<BookEntity[]> {
+    if (this.entityCache.has(bookHash)) return this.entityCache.get(bookHash)!;
+    const db = await this.openDB();
+    return new Promise((resolve, reject) => {
+      const req = db
+        .transaction(ENTITIES_STORE, 'readonly')
+        .objectStore(ENTITIES_STORE)
+        .index('bookHash')
+        .getAll(bookHash);
+      req.onsuccess = () => {
+        const entities = req.result as BookEntity[];
+        this.entityCache.set(bookHash, entities);
+        resolve(entities);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async saveEntityIndex(entityIndex: BookEntityIndex): Promise<void> {
+    const db = await this.openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(ENTITY_INDEX_STORE, 'readwrite');
+      tx.objectStore(ENTITY_INDEX_STORE).put(entityIndex);
+      tx.oncomplete = () => {
+        this.entityIndexCache.set(entityIndex.bookHash, entityIndex);
+        resolve();
+      };
+      tx.onerror = () => {
+        aiLogger.store.error('saveEntityIndex', tx.error?.message || 'TX error');
+        reject(tx.error);
+      };
+    });
+  }
+
+  async getEntityIndex(bookHash: string): Promise<BookEntityIndex | null> {
+    if (this.entityIndexCache.has(bookHash)) return this.entityIndexCache.get(bookHash)!;
+    const db = await this.openDB();
+    return new Promise((resolve, reject) => {
+      const req = db
+        .transaction(ENTITY_INDEX_STORE, 'readonly')
+        .objectStore(ENTITY_INDEX_STORE)
+        .get(bookHash);
+      req.onsuccess = () => {
+        const index = req.result as BookEntityIndex | undefined;
+        if (index) this.entityIndexCache.set(bookHash, index);
+        resolve(index || null);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async isEntityIndexed(bookHash: string): Promise<boolean> {
+    const index = await this.getEntityIndex(bookHash);
+    return index !== null && index.complete;
+  }
+
+  async clearEntityData(bookHash: string): Promise<void> {
+    const db = await this.openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([ENTITIES_STORE, ENTITY_INDEX_STORE], 'readwrite');
+
+      const cursor = tx.objectStore(ENTITIES_STORE).index('bookHash').openCursor(bookHash);
+      cursor.onsuccess = (e) => {
+        const c = (e.target as IDBRequest<IDBCursorWithValue>).result;
+        if (c) {
+          c.delete();
+          c.continue();
+        }
+      };
+
+      tx.objectStore(ENTITY_INDEX_STORE).delete(bookHash);
+
+      tx.oncomplete = () => {
+        this.entityCache.delete(bookHash);
+        this.entityIndexCache.delete(bookHash);
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  // --- Recap methods ---
+
+  async saveRecap(recap: BookRecap): Promise<void> {
+    // Ensure recap has a unique ID
+    if (!recap.id) {
+      recap.id = `${recap.bookHash}-recap-${recap.createdAt}`;
+    }
+    const db = await this.openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(RECAPS_STORE, 'readwrite');
+      tx.objectStore(RECAPS_STORE).put(recap);
+      tx.oncomplete = () => {
+        this.recapCache.delete(recap.bookHash);
+        resolve();
+      };
+      tx.onerror = () => {
+        aiLogger.store.error('saveRecap', tx.error?.message || 'TX error');
+        reject(tx.error);
+      };
+    });
+  }
+
+  async getRecaps(bookHash: string): Promise<BookRecap[]> {
+    if (this.recapCache.has(bookHash)) return this.recapCache.get(bookHash)!;
+    const db = await this.openDB();
+    return new Promise((resolve, reject) => {
+      const req = db
+        .transaction(RECAPS_STORE, 'readonly')
+        .objectStore(RECAPS_STORE)
+        .index('bookHash')
+        .getAll(bookHash);
+      req.onsuccess = () => {
+        const recaps = (req.result as BookRecap[]).sort((a, b) => b.createdAt - a.createdAt);
+        this.recapCache.set(bookHash, recaps);
+        resolve(recaps);
+      };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async getLatestRecap(bookHash: string): Promise<BookRecap | null> {
+    const recaps = await this.getRecaps(bookHash);
+    return recaps.length > 0 ? recaps[0]! : null;
+  }
+
+  async getRecapNearProgress(bookHash: string, progressPercent: number): Promise<BookRecap | null> {
+    const recaps = await this.getRecaps(bookHash);
+    const TOLERANCE = 5;
+    return recaps.find((r) => Math.abs(r.progressPercent - progressPercent) <= TOLERANCE) || null;
   }
 }
 

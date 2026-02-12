@@ -22,8 +22,10 @@ import {
   createTauriAdapter,
   getLastSources,
   clearLastSources,
+  getIndexDiagnostics,
 } from '@/services/ai';
-import type { EmbeddingProgress, AISettings, AIMessage } from '@/services/ai/types';
+import type { EmbeddingProgress, AISettings, AIMessage, BookEntity } from '@/services/ai/types';
+import type { IndexDiagnostics } from '@/services/ai/ragService';
 import { useEnv } from '@/context/EnvContext';
 
 import { Button } from '@/components/ui/button';
@@ -75,6 +77,7 @@ const AIAssistantChat = ({
   bookTitle,
   authorName,
   currentPage,
+  currentChapter,
   onResetIndex,
 }: {
   aiSettings: AISettings;
@@ -82,6 +85,7 @@ const AIAssistantChat = ({
   bookTitle: string;
   authorName: string;
   currentPage: number;
+  currentChapter?: string;
   onResetIndex: () => void;
 }) => {
   const {
@@ -91,6 +95,45 @@ const AIAssistantChat = ({
     isLoadingHistory,
   } = useAIChatStore();
 
+  const [entities, setEntities] = useState<BookEntity[]>([]);
+  const [latestRecap, setLatestRecap] = useState<string | undefined>(undefined);
+  const [suggestedPrompts, setSuggestedPrompts] = useState<string[]>([]);
+  const [diagnostics, setDiagnostics] = useState<IndexDiagnostics | null>(null);
+
+  // Load entities and recap for context enrichment
+  useEffect(() => {
+    const loadContext = async () => {
+      try {
+        const loadedEntities = await aiStore.getEntities(bookHash);
+        setEntities(loadedEntities);
+
+        const recap = await aiStore.getLatestRecap(bookHash);
+        if (recap) setLatestRecap(recap.recap);
+
+        const diag = await getIndexDiagnostics(bookHash);
+        setDiagnostics(diag);
+
+        // Generate suggested prompts
+        const prompts: string[] = [];
+        const majorChars = loadedEntities.filter(
+          (e) => e.type === 'character' && e.importance === 'major',
+        );
+        if (majorChars.length > 0) {
+          prompts.push(`Tell me about ${majorChars[0]!.name}`);
+        }
+        prompts.push('What themes are emerging so far?');
+        prompts.push('Recap what happened in the last chapter');
+        if (majorChars.length > 1) {
+          prompts.push(`How are ${majorChars[0]!.name} and ${majorChars[1]!.name} connected?`);
+        }
+        setSuggestedPrompts(prompts.slice(0, 4));
+      } catch {
+        // Non-critical: proceed without context enrichment
+      }
+    };
+    if (bookHash) loadContext();
+  }, [bookHash]);
+
   // use a ref to keep up-to-date options without triggering re-renders of the runtime
   const optionsRef = useRef({
     settings: aiSettings,
@@ -98,6 +141,9 @@ const AIAssistantChat = ({
     bookTitle,
     authorName,
     currentPage,
+    currentChapter,
+    entities,
+    latestRecap,
   });
 
   // update ref on every render with latest values
@@ -108,6 +154,9 @@ const AIAssistantChat = ({
       bookTitle,
       authorName,
       currentPage,
+      currentChapter,
+      entities,
+      latestRecap,
     };
   });
 
@@ -160,6 +209,8 @@ const AIAssistantChat = ({
       onResetIndex={onResetIndex}
       isLoadingHistory={isLoadingHistory}
       hasActiveConversation={!!activeConversationId}
+      suggestedPrompts={suggestedPrompts}
+      indexDiagnostics={diagnostics}
     />
   );
 };
@@ -170,12 +221,16 @@ const AIAssistantWithRuntime = ({
   onResetIndex,
   isLoadingHistory,
   hasActiveConversation,
+  suggestedPrompts,
+  indexDiagnostics,
 }: {
   adapter: NonNullable<ReturnType<typeof createTauriAdapter>>;
   historyAdapter?: ThreadHistoryAdapter;
   onResetIndex: () => void;
   isLoadingHistory: boolean;
   hasActiveConversation: boolean;
+  suggestedPrompts?: string[];
+  indexDiagnostics?: IndexDiagnostics | null;
 }) => {
   const runtime = useLocalRuntime(adapter, {
     adapters: historyAdapter ? { history: historyAdapter } : undefined,
@@ -189,6 +244,8 @@ const AIAssistantWithRuntime = ({
         onResetIndex={onResetIndex}
         isLoadingHistory={isLoadingHistory}
         hasActiveConversation={hasActiveConversation}
+        suggestedPrompts={suggestedPrompts}
+        indexDiagnostics={indexDiagnostics}
       />
     </AssistantRuntimeProvider>
   );
@@ -198,10 +255,14 @@ const ThreadWrapper = ({
   onResetIndex,
   isLoadingHistory,
   hasActiveConversation,
+  suggestedPrompts,
+  indexDiagnostics,
 }: {
   onResetIndex: () => void;
   isLoadingHistory: boolean;
   hasActiveConversation: boolean;
+  suggestedPrompts?: string[];
+  indexDiagnostics?: IndexDiagnostics | null;
 }) => {
   const [sources, setSources] = useState(getLastSources());
   const assistantRuntime = useAssistantRuntime();
@@ -228,6 +289,8 @@ const ThreadWrapper = ({
       onResetIndex={onResetIndex}
       isLoadingHistory={isLoadingHistory}
       hasActiveConversation={hasActiveConversation}
+      suggestedPrompts={suggestedPrompts}
+      indexDiagnostics={indexDiagnostics}
     />
   );
 };
@@ -250,6 +313,7 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
   const bookTitle = bookData?.book?.title || 'Unknown';
   const authorName = bookData?.book?.author || '';
   const currentPage = progress?.pageinfo?.current ?? 0;
+  const currentChapter = progress?.sectionLabel || '';
   const aiSettings = settings?.aiSettings;
 
   // check if book is indexed on mount
@@ -357,6 +421,7 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
       bookTitle={bookTitle}
       authorName={authorName}
       currentPage={currentPage}
+      currentChapter={currentChapter}
       onResetIndex={handleResetIndex}
     />
   );

@@ -17,6 +17,7 @@ interface TOCItem {
   id: number;
   label: string;
   href?: string;
+  subitems?: TOCItem[];
 }
 
 export interface BookDocType {
@@ -50,12 +51,46 @@ function extractAuthor(metadata?: BookDocType['metadata']): string {
   return metadata.author.name || 'Unknown Author';
 }
 
-function getChapterTitle(toc: TOCItem[] | undefined, sectionIndex: number): string {
-  if (!toc || toc.length === 0) return `Section ${sectionIndex + 1}`;
-  for (let i = toc.length - 1; i >= 0; i--) {
-    if (toc[i]!.id <= sectionIndex) return toc[i]!.label;
+/**
+ * Build a map from spine section index → chapter title by matching TOC hrefs
+ * to section hrefs. TOCItem.id is a sequential UI counter and does NOT
+ * correspond to the spine index, so we match on href instead.
+ */
+function buildChapterMap(sections: SectionItem[], toc: TOCItem[]): Map<number, string> {
+  // Map section href → spine index (sections[i].id is the XHTML file href)
+  const hrefToIndex = new Map<string, number>();
+  for (let i = 0; i < sections.length; i++) {
+    hrefToIndex.set(sections[i]!.id, i);
   }
-  return toc[0]?.label || `Section ${sectionIndex + 1}`;
+
+  const chapterMap = new Map<number, string>();
+
+  // Recursively walk TOC tree and match hrefs to section indices
+  const walkToc = (items: TOCItem[]) => {
+    for (const item of items) {
+      if (item.href && item.label) {
+        const hrefBase = item.href.split('#')[0]!; // strip fragment identifier
+        const sectionIdx = hrefToIndex.get(item.href) ?? hrefToIndex.get(hrefBase);
+        if (sectionIdx !== undefined && !chapterMap.has(sectionIdx)) {
+          chapterMap.set(sectionIdx, item.label);
+        }
+      }
+      if (item.subitems) walkToc(item.subitems);
+    }
+  };
+  walkToc(toc);
+
+  return chapterMap;
+}
+
+function getChapterTitle(chapterMap: Map<number, string>, sectionIndex: number): string {
+  // Direct match
+  if (chapterMap.has(sectionIndex)) return chapterMap.get(sectionIndex)!;
+  // Fallback: nearest prior section with a chapter title
+  for (let i = sectionIndex - 1; i >= 0; i--) {
+    if (chapterMap.has(i)) return chapterMap.get(i)!;
+  }
+  return `Section ${sectionIndex + 1}`;
 }
 
 export async function indexBook(
@@ -76,6 +111,9 @@ export async function indexBook(
   const provider = getAIProvider(settings);
   const sections = bookDoc.sections || [];
   const toc = bookDoc.toc || [];
+
+  // build href-based section → chapter title mapping
+  const chapterMap = buildChapterMap(sections, toc);
 
   // calculate cumulative character sizes like toc.ts does
   const sizes = sections.map((s) => (s.linear !== 'no' && s.size > 0 ? s.size : 0));
@@ -105,11 +143,14 @@ export async function indexBook(
       try {
         const doc = await section.createDocument();
         const text = extractTextFromDocument(doc);
-        if (text.length < 100) continue;
+        if (text.length < 100) {
+          aiLogger.chunker.section(i, text.length, 0);
+          continue;
+        }
         const sectionChunks = chunkSection(
           doc,
           i,
-          getChapterTitle(toc, i),
+          getChapterTitle(chapterMap, i),
           bookHash,
           cumulativeSizes[i] ?? 0,
         );
@@ -130,35 +171,52 @@ export async function indexBook(
       return;
     }
 
-    onProgress?.({ current: 0, total: allChunks.length, phase: 'embedding' });
-    const embeddingModelName =
-      settings.provider === 'ollama'
-        ? settings.ollamaEmbeddingModel
-        : settings.aiGatewayEmbeddingModel || 'text-embedding-3-small';
-    aiLogger.embedding.start(embeddingModelName, allChunks.length);
+    const hasEmbeddings = provider.supportsEmbeddings();
+    let embeddingModelName: string;
 
-    const texts = allChunks.map((c) => c.text);
-    try {
-      const { embeddings } = await withRetryAndTimeout(
-        () =>
-          embedMany({
-            model: provider.getEmbeddingModel(),
-            values: texts,
-          }),
-        AI_TIMEOUTS.EMBEDDING_BATCH,
-        AI_RETRY_CONFIGS.EMBEDDING,
-      );
+    if (hasEmbeddings) {
+      onProgress?.({ current: 0, total: allChunks.length, phase: 'embedding' });
+      embeddingModelName =
+        settings.provider === 'ollama'
+          ? settings.ollamaEmbeddingModel
+          : settings.provider === 'openai'
+            ? settings.openaiEmbeddingModel || 'text-embedding-3-small'
+            : settings.aiGatewayEmbeddingModel || 'text-embedding-3-small';
+      aiLogger.embedding.start(embeddingModelName, allChunks.length);
 
-      for (let i = 0; i < allChunks.length; i++) {
-        allChunks[i]!.embedding = embeddings[i];
-        state.chunksProcessed = i + 1;
-        state.progress = Math.round(((i + 1) / allChunks.length) * 100);
+      const texts = allChunks.map((c) => c.text);
+      try {
+        const { embeddings } = await withRetryAndTimeout(
+          () =>
+            embedMany({
+              model: provider.getEmbeddingModel(),
+              values: texts,
+            }),
+          AI_TIMEOUTS.EMBEDDING_BATCH,
+          AI_RETRY_CONFIGS.EMBEDDING,
+        );
+
+        for (let i = 0; i < allChunks.length; i++) {
+          allChunks[i]!.embedding = embeddings[i];
+          state.chunksProcessed = i + 1;
+          state.progress = Math.round(((i + 1) / allChunks.length) * 100);
+        }
+        onProgress?.({ current: allChunks.length, total: allChunks.length, phase: 'embedding' });
+        aiLogger.embedding.complete(
+          embeddings.length,
+          allChunks.length,
+          embeddings[0]?.length || 0,
+        );
+      } catch (e) {
+        aiLogger.embedding.error('batch', (e as Error).message);
+        throw e;
       }
-      onProgress?.({ current: allChunks.length, total: allChunks.length, phase: 'embedding' });
-      aiLogger.embedding.complete(embeddings.length, allChunks.length, embeddings[0]?.length || 0);
-    } catch (e) {
-      aiLogger.embedding.error('batch', (e as Error).message);
-      throw e;
+    } else {
+      // No embeddings support — BM25-only indexing
+      embeddingModelName = 'bm25-only';
+      aiLogger.embedding.start('bm25-only', allChunks.length);
+      state.chunksProcessed = allChunks.length;
+      state.progress = 100;
     }
 
     onProgress?.({ current: 0, total: 2, phase: 'indexing' });
@@ -204,20 +262,22 @@ export async function hybridSearch(
   const provider = getAIProvider(settings);
   let queryEmbedding: number[] | null = null;
 
-  try {
-    // use AI SDK embed with provider's embedding model
-    const { embedding } = await withRetryAndTimeout(
-      () =>
-        embed({
-          model: provider.getEmbeddingModel(),
-          value: query,
-        }),
-      AI_TIMEOUTS.EMBEDDING_SINGLE,
-      AI_RETRY_CONFIGS.EMBEDDING,
-    );
-    queryEmbedding = embedding;
-  } catch {
-    // bm25 only fallback
+  if (provider.supportsEmbeddings()) {
+    try {
+      // use AI SDK embed with provider's embedding model
+      const { embedding } = await withRetryAndTimeout(
+        () =>
+          embed({
+            model: provider.getEmbeddingModel(),
+            value: query,
+          }),
+        AI_TIMEOUTS.EMBEDDING_SINGLE,
+        AI_RETRY_CONFIGS.EMBEDDING,
+      );
+      queryEmbedding = embedding;
+    } catch {
+      // bm25 only fallback
+    }
   }
 
   const results = await aiStore.hybridSearch(bookHash, queryEmbedding, query, topK, maxPage);
@@ -229,6 +289,61 @@ export async function clearBookIndex(bookHash: string): Promise<void> {
   aiLogger.store.clear(bookHash);
   await aiStore.clearBook(bookHash);
   indexingStates.delete(bookHash);
+}
+
+export interface ChapterIndexInfo {
+  title: string;
+  sectionIndex: number;
+  chunkCount: number;
+  totalChars: number;
+  pageRange: [number, number];
+}
+
+export interface IndexDiagnostics {
+  bookHash: string;
+  totalChunks: number;
+  totalSections: number;
+  chapters: ChapterIndexInfo[];
+  embeddingModel: string;
+  lastUpdated: number;
+}
+
+export async function getIndexDiagnostics(bookHash: string): Promise<IndexDiagnostics | null> {
+  const meta = await aiStore.getMeta(bookHash);
+  if (!meta) return null;
+
+  const chunks = await aiStore.getChunks(bookHash);
+  if (chunks.length === 0) return null;
+
+  // Group by chapterTitle to match recap behavior
+  const chapterMap = new Map<string, ChapterIndexInfo>();
+  for (const chunk of chunks) {
+    const title = chunk.chapterTitle || `Section ${chunk.sectionIndex + 1}`;
+    let info = chapterMap.get(title);
+    if (!info) {
+      info = {
+        title,
+        sectionIndex: chunk.sectionIndex,
+        chunkCount: 0,
+        totalChars: 0,
+        pageRange: [chunk.pageNumber, chunk.pageNumber],
+      };
+      chapterMap.set(title, info);
+    }
+    info.chunkCount++;
+    info.totalChars += chunk.text.length;
+    info.pageRange[0] = Math.min(info.pageRange[0], chunk.pageNumber);
+    info.pageRange[1] = Math.max(info.pageRange[1], chunk.pageNumber);
+  }
+
+  return {
+    bookHash,
+    totalChunks: chunks.length,
+    totalSections: meta.totalSections,
+    chapters: Array.from(chapterMap.values()).sort((a, b) => a.sectionIndex - b.sectionIndex),
+    embeddingModel: meta.embeddingModel,
+    lastUpdated: meta.lastUpdated,
+  };
 }
 
 // internal type for indexing state tracking

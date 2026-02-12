@@ -1,6 +1,12 @@
 import type { LanguageModel, EmbeddingModel } from 'ai';
 
-export type AIProviderName = 'ollama' | 'ai-gateway';
+export type AIProviderName =
+  | 'ollama'
+  | 'ai-gateway'
+  | 'openai'
+  | 'anthropic'
+  | 'google'
+  | 'openai-compatible';
 
 export interface AIProvider {
   id: AIProviderName;
@@ -9,6 +15,7 @@ export interface AIProvider {
 
   getModel(): LanguageModel;
   getEmbeddingModel(): EmbeddingModel;
+  supportsEmbeddings(): boolean;
 
   isAvailable(): Promise<boolean>;
   healthCheck(): Promise<boolean>;
@@ -27,9 +34,93 @@ export interface AISettings {
   aiGatewayCustomModel?: string;
   aiGatewayEmbeddingModel?: string;
 
+  // OpenAI
+  openaiApiKey?: string;
+  openaiModel?: string;
+  openaiEmbeddingModel?: string;
+
+  // Anthropic
+  anthropicApiKey?: string;
+  anthropicModel?: string;
+
+  // Google Gemini
+  googleApiKey?: string;
+  googleModel?: string;
+
+  // OpenAI-Compatible (OpenRouter, Together, Groq, etc.)
+  openaiCompatibleApiKey?: string;
+  openaiCompatibleBaseUrl?: string;
+  openaiCompatibleModel?: string;
+  openaiCompatibleName?: string;
+
   spoilerProtection: boolean;
   maxContextChunks: number;
   indexingMode: 'on-demand' | 'background';
+
+  xrayEnabled: boolean;
+  recapEnabled: boolean;
+}
+
+// --- X-Ray Entity Types ---
+
+export type EntityType = 'character' | 'location' | 'theme' | 'term' | 'event';
+
+export interface DescriptionFragment {
+  text: string;
+  maxSection: number;
+}
+
+export interface BookEntity {
+  id: string;
+  bookHash: string;
+  name: string;
+  type: EntityType;
+  aliases: string[];
+  role: string;
+  description: string;
+  descriptionFragments: DescriptionFragment[];
+  connections: string[];
+  importance: 'major' | 'minor';
+  firstMentionSection: number;
+  firstMentionPage: number;
+  sectionAppearances: number[];
+}
+
+export interface BookEntityIndex {
+  bookHash: string;
+  entities: BookEntity[];
+  extractionModel: string;
+  lastUpdated: number;
+  version: number;
+  processedSections: number[];
+  totalSections: number;
+  complete: boolean;
+  progressPercent: number;
+  maxExtractedPage?: number;
+}
+
+export interface EntityProfile {
+  entity: BookEntity;
+  scopedDescription: string;
+  visibleConnections: string[];
+  chaptersAppearing: string[];
+}
+
+export interface EntityExtractionProgress {
+  current: number;
+  total: number;
+  phase: 'extracting' | 'storing';
+}
+
+// --- Recap Types ---
+
+export interface BookRecap {
+  id: string;
+  bookHash: string;
+  progressPercent: number;
+  recap: string;
+  model: string;
+  createdAt: number;
 }
 
 export interface TextChunk {

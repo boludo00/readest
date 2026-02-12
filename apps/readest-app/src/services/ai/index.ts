@@ -5,3 +5,6 @@ export * from './ragService';
 export * from './adapters';
 export * from './storage/aiStore';
 export * from './logger';
+export * from './entityExtractor';
+export * from './entityLookup';
+export * from './recapService';

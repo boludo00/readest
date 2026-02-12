@@ -1,10 +1,12 @@
 import { streamText } from 'ai';
 import type { ChatModelAdapter, ChatModelRunResult } from '@assistant-ui/react';
+import { isTauriAppPlatform } from '@/services/environment';
 import { getAIProvider } from '../providers';
 import { hybridSearch, isBookIndexed } from '../ragService';
 import { aiLogger } from '../logger';
 import { buildSystemPrompt } from '../prompts';
-import type { AISettings, ScoredChunk } from '../types';
+import { getApiKeyForProvider, getModelForProvider } from '../utils/providerHelpers';
+import type { AISettings, BookEntity, ScoredChunk } from '../types';
 
 let lastSources: ScoredChunk[] = [];
 
@@ -22,6 +24,9 @@ interface TauriAdapterOptions {
   bookTitle: string;
   authorName: string;
   currentPage: number;
+  currentChapter?: string;
+  entities?: BookEntity[];
+  latestRecap?: string;
 }
 
 async function* streamViaApiRoute(
@@ -36,8 +41,12 @@ async function* streamViaApiRoute(
     body: JSON.stringify({
       messages,
       system: systemPrompt,
-      apiKey: settings.aiGatewayApiKey,
-      model: settings.aiGatewayModel || 'google/gemini-2.5-flash-lite',
+      apiKey: getApiKeyForProvider(settings),
+      model: getModelForProvider(settings),
+      provider: settings.provider,
+      ...(settings.provider === 'openai-compatible'
+        ? { baseUrl: settings.openaiCompatibleBaseUrl }
+        : {}),
     }),
     signal: abortSignal,
   });
@@ -93,7 +102,11 @@ export function createTauriAdapter(getOptions: () => TauriAdapterOptions): ChatM
         lastSources = [];
       }
 
-      const systemPrompt = buildSystemPrompt(bookTitle, authorName, chunks, currentPage);
+      const systemPrompt = buildSystemPrompt(bookTitle, authorName, chunks, currentPage, {
+        entities: options.entities,
+        recap: options.latestRecap,
+        currentChapter: options.currentChapter,
+      });
 
       const aiMessages = messages.map((m) => ({
         role: m.role as 'user' | 'assistant',
@@ -104,11 +117,14 @@ export function createTauriAdapter(getOptions: () => TauriAdapterOptions): ChatM
       }));
 
       try {
-        const useApiRoute = typeof window !== 'undefined' && settings.provider === 'ai-gateway';
+        // Tauri: always use SDK directly (providers use tauriFetch)
+        // Ollama: always use SDK directly (local, no CORS)
+        // Web + cloud providers: proxy via API route (CORS)
+        const useDirectSdk = isTauriAppPlatform() || settings.provider === 'ollama';
 
         let text = '';
 
-        if (useApiRoute) {
+        if (!useDirectSdk) {
           for await (const chunk of streamViaApiRoute(
             aiMessages,
             systemPrompt,

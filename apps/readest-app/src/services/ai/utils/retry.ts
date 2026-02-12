@@ -72,6 +72,8 @@ export const AI_TIMEOUTS = {
   CHAT_STREAM: 60_000, // 60s for chat response start
   HEALTH_CHECK: 5_000, // 5s for health check
   OLLAMA_CONNECT: 5_000, // 5s for ollama connection
+  ENTITY_EXTRACTION: 180_000, // 3min for entity extraction pass
+  RECAP_GENERATION: 60_000, // 60s for recap generation
 } as const;
 
 // retry configs for different operations

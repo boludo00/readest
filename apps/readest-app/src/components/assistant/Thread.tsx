@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, type FC } from 'react';
+import { useEffect, useRef, useCallback, type FC } from 'react';
 import {
   ActionBarPrimitive,
   AssistantIf,
@@ -9,6 +9,7 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
   useAssistantState,
+  useAssistantRuntime,
   useThreadViewport,
   useThread,
 } from '@assistant-ui/react';
@@ -20,6 +21,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CopyIcon,
+  DatabaseIcon,
   PencilIcon,
   RefreshCwIcon,
   SquareIcon,
@@ -27,6 +29,7 @@ import {
 } from 'lucide-react';
 
 import { MarkdownText } from './MarkdownText';
+import SuggestedPrompts from './SuggestedPrompts';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -35,6 +38,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/utils/tailwind';
 import type { ScoredChunk } from '@/services/ai/types';
+import type { IndexDiagnostics } from '@/services/ai/ragService';
 
 interface ThreadProps {
   sources?: ScoredChunk[];
@@ -42,6 +46,8 @@ interface ThreadProps {
   onResetIndex?: () => void;
   isLoadingHistory?: boolean;
   hasActiveConversation?: boolean;
+  suggestedPrompts?: string[];
+  indexDiagnostics?: IndexDiagnostics | null;
 }
 
 const LoadingOverlay: FC<{ isVisible: boolean }> = ({ isVisible }) => {
@@ -105,6 +111,8 @@ export const Thread: FC<ThreadProps> = ({
   onResetIndex,
   isLoadingHistory = false,
   hasActiveConversation = false,
+  suggestedPrompts = [],
+  indexDiagnostics,
 }) => {
   const viewportRef = useRef<HTMLDivElement>(null);
   const isInitialMount = useRef(true);
@@ -157,6 +165,18 @@ export const Thread: FC<ThreadProps> = ({
     return 'min-h-4';
   };
 
+  const runtime = useAssistantRuntime();
+
+  const handleSuggestedPrompt = useCallback(
+    (prompt: string) => {
+      runtime.thread.append({
+        role: 'user',
+        content: [{ type: 'text', text: prompt }],
+      });
+    },
+    [runtime],
+  );
+
   return (
     <ThreadPrimitive.Root className='bg-base-100 relative flex h-full w-full flex-col items-stretch px-3'>
       <LoadingOverlay isVisible={showLoading} />
@@ -171,7 +191,16 @@ export const Thread: FC<ThreadProps> = ({
             <p className='text-base-content/60 mb-4 text-xs'>
               Get answers based on the book content
             </p>
-            <Composer onClear={onClear} onResetIndex={onResetIndex} />
+            {suggestedPrompts.length > 0 && (
+              <div className='mb-4'>
+                <SuggestedPrompts prompts={suggestedPrompts} onSelect={handleSuggestedPrompt} />
+              </div>
+            )}
+            <Composer
+              onClear={onClear}
+              onResetIndex={onResetIndex}
+              indexDiagnostics={indexDiagnostics}
+            />
           </div>
         </ThreadPrimitive.Empty>
       )}
@@ -207,7 +236,11 @@ export const Thread: FC<ThreadProps> = ({
           <ScrollToBottomButton />
         </div>
 
-        <Composer onClear={onClear} onResetIndex={onResetIndex} />
+        <Composer
+          onClear={onClear}
+          onResetIndex={onResetIndex}
+          indexDiagnostics={indexDiagnostics}
+        />
       </AssistantIf>
     </ThreadPrimitive.Root>
   );
@@ -216,9 +249,15 @@ export const Thread: FC<ThreadProps> = ({
 interface ComposerProps {
   onClear?: () => void;
   onResetIndex?: () => void;
+  indexDiagnostics?: IndexDiagnostics | null;
 }
 
-const Composer: FC<ComposerProps> = ({ onClear, onResetIndex }) => {
+function formatCharsShort(chars: number): string {
+  if (chars >= 1000) return `${(chars / 1000).toFixed(1)}k`;
+  return `${chars}`;
+}
+
+const Composer: FC<ComposerProps> = ({ onClear, onResetIndex, indexDiagnostics }) => {
   const isEmpty = useAssistantState((s) => s.composer.isEmpty);
   const isRunning = useAssistantState((s) => s.thread.isRunning);
 
@@ -251,6 +290,66 @@ const Composer: FC<ComposerProps> = ({ onClear, onResetIndex }) => {
             >
               <RefreshCwIcon className='size-3.5' />
             </button>
+          )}
+
+          {indexDiagnostics && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type='button'
+                  className='text-base-content hover:bg-base-300 mb-0.5 flex size-7 shrink-0 items-center justify-center rounded-full transition-colors'
+                  title='Index info'
+                  aria-label='Index info'
+                >
+                  <DatabaseIcon className='size-3.5' />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align='start'
+                className='bg-base-100 border-base-content/10 w-72 p-2'
+              >
+                <div className='text-base-content/60 mb-1.5 px-1 text-[11px] font-semibold'>
+                  Index Overview
+                </div>
+                <div className='text-base-content/50 mb-2 space-y-0.5 px-1 text-[10px]'>
+                  <p>
+                    {indexDiagnostics.totalChunks} chunks &middot; {indexDiagnostics.totalSections}{' '}
+                    sections &middot; {indexDiagnostics.embeddingModel}
+                  </p>
+                  <p>
+                    Updated{' '}
+                    {new Date(indexDiagnostics.lastUpdated).toLocaleDateString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </p>
+                </div>
+                <div className='text-base-content/60 mb-1 px-1 text-[11px] font-semibold'>
+                  Chapters ({indexDiagnostics.chapters.length})
+                </div>
+                <div className='flex max-h-48 flex-col gap-1 overflow-y-auto'>
+                  {indexDiagnostics.chapters.map((ch) => (
+                    <div
+                      key={`${ch.sectionIndex}-${ch.title}`}
+                      className='border-base-content/10 bg-base-200/50 rounded-lg border px-2 py-1.5 text-[11px]'
+                    >
+                      <div className='text-base-content flex items-center justify-between font-medium'>
+                        <span className='mr-2 truncate'>{ch.title}</span>
+                        <span className='text-base-content/40 shrink-0 text-[10px]'>
+                          {ch.chunkCount} chunks
+                        </span>
+                      </div>
+                      <div className='text-base-content/50 mt-0.5 text-[10px]'>
+                        {formatCharsShort(ch.totalChars)} chars &middot; pages {ch.pageRange[0]}–
+                        {ch.pageRange[1]}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
 
           <ComposerPrimitive.Input

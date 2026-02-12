@@ -117,4 +117,32 @@ export const aiLogger = {
     error: (provider: string, error: string) =>
       log('error', 'PROVIDER', `${provider} error: ${error}`),
   },
+  entity: {
+    extractStart: (bookHash: string, passCount: number) =>
+      log('info', 'ENTITY', `Starting extraction`, { bookHash, passCount }),
+    extractPass: (passLabel: string, textLength: number) =>
+      log('debug', 'ENTITY', `Pass "${passLabel}": ${textLength} chars`),
+    extractResult: (passLabel: string, entityCount: number) =>
+      log('info', 'ENTITY', `Pass "${passLabel}" found ${entityCount} entities`),
+    extractComplete: (bookHash: string, totalEntities: number, duration: number) =>
+      log('info', 'ENTITY', `Extraction complete`, {
+        bookHash,
+        totalEntities,
+        durationMs: duration,
+      }),
+    extractError: (bookHash: string, error: string) =>
+      log('error', 'ENTITY', `Extraction failed`, { bookHash, error }),
+    cached: (bookHash: string, entityCount: number) =>
+      log('debug', 'ENTITY', `Using cached index`, { bookHash, entityCount }),
+  },
+  recap: {
+    generateStart: (bookHash: string, progressPercent: number) =>
+      log('info', 'RECAP', `Generating recap`, { bookHash, progressPercent }),
+    generateComplete: (bookHash: string, recapLength: number) =>
+      log('info', 'RECAP', `Recap generated: ${recapLength} chars`, { bookHash }),
+    generateError: (bookHash: string, error: string) =>
+      log('error', 'RECAP', `Recap failed`, { bookHash, error }),
+    cached: (bookHash: string, progressPercent: number) =>
+      log('debug', 'RECAP', `Using cached recap`, { bookHash, progressPercent }),
+  },
 };

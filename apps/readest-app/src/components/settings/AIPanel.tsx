@@ -6,7 +6,15 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useEnv } from '@/context/EnvContext';
 import { getAIProvider } from '@/services/ai/providers';
-import { DEFAULT_AI_SETTINGS, GATEWAY_MODELS, MODEL_PRICING } from '@/services/ai/constants';
+import {
+  DEFAULT_AI_SETTINGS,
+  GATEWAY_MODELS,
+  MODEL_PRICING,
+  OPENAI_MODELS,
+  OPENAI_EMBEDDING_MODELS,
+  ANTHROPIC_MODELS,
+  GOOGLE_MODELS,
+} from '@/services/ai/constants';
 import type { AISettings, AIProviderName } from '@/services/ai/types';
 
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
@@ -21,7 +29,16 @@ interface ModelOption {
   outputCost: string;
 }
 
-const getModelOptions = (): ModelOption[] => [
+const PROVIDER_OPTIONS: { id: AIProviderName; label: string }[] = [
+  { id: 'ollama', label: 'Ollama (Local)' },
+  { id: 'ai-gateway', label: 'AI Gateway (Cloud)' },
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'anthropic', label: 'Anthropic' },
+  { id: 'google', label: 'Google Gemini' },
+  { id: 'openai-compatible', label: 'OpenAI Compatible' },
+];
+
+const getGatewayModelOptions = (): ModelOption[] => [
   {
     id: GATEWAY_MODELS.GEMINI_FLASH_LITE,
     label: 'Gemini 2.5 Flash Lite',
@@ -69,18 +86,20 @@ const AIPanel: React.FC = () => {
 
   const [enabled, setEnabled] = useState(aiSettings.enabled);
   const [provider, setProvider] = useState<AIProviderName>(aiSettings.provider);
+
+  // Ollama state
   const [ollamaUrl, setOllamaUrl] = useState(aiSettings.ollamaBaseUrl);
   const [ollamaModel, setOllamaModel] = useState(aiSettings.ollamaModel);
   const [ollamaEmbeddingModel, setOllamaEmbeddingModel] = useState(aiSettings.ollamaEmbeddingModel);
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [fetchingModels, setFetchingModels] = useState(false);
-  const [gatewayKey, setGatewayKey] = useState(aiSettings.aiGatewayApiKey ?? '');
 
+  // AI Gateway state
+  const [gatewayKey, setGatewayKey] = useState(aiSettings.aiGatewayApiKey ?? '');
   const savedCustomModel = aiSettings.aiGatewayCustomModel ?? '';
   const savedModel = aiSettings.aiGatewayModel ?? DEFAULT_AI_SETTINGS.aiGatewayModel ?? '';
   const isCustomModelSaved = savedCustomModel.length > 0;
-
-  const [selectedModel, setSelectedModel] = useState(
+  const [selectedGatewayModel, setSelectedGatewayModel] = useState(
     isCustomModelSaved ? CUSTOM_MODEL_VALUE : savedModel,
   );
   const [customModelInput, setCustomModelInput] = useState(savedCustomModel);
@@ -93,25 +112,56 @@ const AIPanel: React.FC = () => {
   } | null>(isCustomModelSaved ? { input: '?', output: '?' } : null);
   const [customModelError, setCustomModelError] = useState('');
 
+  // OpenAI state
+  const [openaiKey, setOpenaiKey] = useState(aiSettings.openaiApiKey ?? '');
+  const [openaiModel, setOpenaiModel] = useState(
+    aiSettings.openaiModel ?? DEFAULT_AI_SETTINGS.openaiModel ?? 'gpt-4.1-nano',
+  );
+  const [openaiEmbeddingModel, setOpenaiEmbeddingModel] = useState(
+    aiSettings.openaiEmbeddingModel ??
+      DEFAULT_AI_SETTINGS.openaiEmbeddingModel ??
+      'text-embedding-3-small',
+  );
+
+  // Anthropic state
+  const [anthropicKey, setAnthropicKey] = useState(aiSettings.anthropicApiKey ?? '');
+  const [anthropicModel, setAnthropicModel] = useState(
+    aiSettings.anthropicModel ?? DEFAULT_AI_SETTINGS.anthropicModel ?? 'claude-sonnet-4-5-20250929',
+  );
+
+  // Google state
+  const [googleKey, setGoogleKey] = useState(aiSettings.googleApiKey ?? '');
+  const [googleModel, setGoogleModel] = useState(
+    aiSettings.googleModel ?? DEFAULT_AI_SETTINGS.googleModel ?? 'gemini-2.5-flash',
+  );
+
+  // OpenAI Compatible state
+  const [compatKey, setCompatKey] = useState(aiSettings.openaiCompatibleApiKey ?? '');
+  const [compatBaseUrl, setCompatBaseUrl] = useState(aiSettings.openaiCompatibleBaseUrl ?? '');
+  const [compatModel, setCompatModel] = useState(aiSettings.openaiCompatibleModel ?? '');
+  const [compatName, setCompatName] = useState(aiSettings.openaiCompatibleName ?? '');
+
+  // Features state
+  const [xrayEnabled, setXrayEnabled] = useState(aiSettings.xrayEnabled ?? true);
+  const [recapEnabled, setRecapEnabled] = useState(aiSettings.recapEnabled ?? true);
+
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
   const [errorMessage, setErrorMessage] = useState('');
 
   const isMounted = useRef(false);
-  const modelOptions = getModelOptions();
+  const gatewayModelOptions = getGatewayModelOptions();
 
-  const settingsRef = useRef(settings);
-  useEffect(() => {
-    settingsRef.current = settings;
-  }, [settings]);
+  const localChangeRef = useRef(false);
 
   const saveAiSetting = useCallback(
     async (key: keyof AISettings, value: AISettings[keyof AISettings]) => {
-      const currentSettings = settingsRef.current;
+      const currentSettings = useSettingsStore.getState().settings;
       if (!currentSettings) return;
       const currentAiSettings: AISettings = currentSettings.aiSettings ?? DEFAULT_AI_SETTINGS;
       const newAiSettings: AISettings = { ...currentAiSettings, [key]: value };
       const newSettings = { ...currentSettings, aiSettings: newAiSettings };
 
+      localChangeRef.current = true;
       setSettings(newSettings);
       await saveSettings(envConfig, newSettings);
     },
@@ -150,85 +200,208 @@ const AIPanel: React.FC = () => {
     isMounted.current = true;
   }, []);
 
+  // Sync local state when store changes externally (e.g. loadSettings, sync)
   useEffect(() => {
     if (!isMounted.current) return;
-    if (enabled !== aiSettings.enabled) {
-      saveAiSetting('enabled', enabled);
+    if (localChangeRef.current) {
+      localChangeRef.current = false;
+      return;
     }
+    setEnabled(aiSettings.enabled);
+    setProvider(aiSettings.provider);
+    setOllamaUrl(aiSettings.ollamaBaseUrl);
+    setOllamaModel(aiSettings.ollamaModel);
+    setOllamaEmbeddingModel(aiSettings.ollamaEmbeddingModel);
+    setGatewayKey(aiSettings.aiGatewayApiKey ?? '');
+    setOpenaiKey(aiSettings.openaiApiKey ?? '');
+    setOpenaiModel(aiSettings.openaiModel ?? DEFAULT_AI_SETTINGS.openaiModel ?? '');
+    setOpenaiEmbeddingModel(
+      aiSettings.openaiEmbeddingModel ?? DEFAULT_AI_SETTINGS.openaiEmbeddingModel ?? '',
+    );
+    setAnthropicKey(aiSettings.anthropicApiKey ?? '');
+    setAnthropicModel(aiSettings.anthropicModel ?? DEFAULT_AI_SETTINGS.anthropicModel ?? '');
+    setGoogleKey(aiSettings.googleApiKey ?? '');
+    setGoogleModel(aiSettings.googleModel ?? DEFAULT_AI_SETTINGS.googleModel ?? '');
+    setCompatKey(aiSettings.openaiCompatibleApiKey ?? '');
+    setCompatBaseUrl(aiSettings.openaiCompatibleBaseUrl ?? '');
+    setCompatModel(aiSettings.openaiCompatibleModel ?? '');
+    setCompatName(aiSettings.openaiCompatibleName ?? '');
+    setXrayEnabled(aiSettings.xrayEnabled ?? true);
+    setRecapEnabled(aiSettings.recapEnabled ?? true);
+    const newSavedCustom = aiSettings.aiGatewayCustomModel ?? '';
+    const newIsCustom = newSavedCustom.length > 0;
+    setSelectedGatewayModel(
+      newIsCustom
+        ? CUSTOM_MODEL_VALUE
+        : (aiSettings.aiGatewayModel ?? DEFAULT_AI_SETTINGS.aiGatewayModel ?? ''),
+    );
+    setCustomModelInput(newSavedCustom);
+    if (newIsCustom) setCustomModelStatus('valid');
+  }, [aiSettings]);
+
+  // Auto-save effects
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (enabled !== aiSettings.enabled) saveAiSetting('enabled', enabled);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
   useEffect(() => {
     if (!isMounted.current) return;
-    if (provider !== aiSettings.provider) {
-      saveAiSetting('provider', provider);
-    }
+    if (provider !== aiSettings.provider) saveAiSetting('provider', provider);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [provider]);
 
+  // Ollama auto-save
   useEffect(() => {
     if (!isMounted.current) return;
-    if (ollamaUrl !== aiSettings.ollamaBaseUrl) {
-      saveAiSetting('ollamaBaseUrl', ollamaUrl);
-    }
+    if (ollamaUrl !== aiSettings.ollamaBaseUrl) saveAiSetting('ollamaBaseUrl', ollamaUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ollamaUrl]);
 
   useEffect(() => {
     if (!isMounted.current) return;
-    if (ollamaModel !== aiSettings.ollamaModel) {
-      saveAiSetting('ollamaModel', ollamaModel);
-    }
+    if (ollamaModel !== aiSettings.ollamaModel) saveAiSetting('ollamaModel', ollamaModel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ollamaModel]);
 
   useEffect(() => {
     if (!isMounted.current) return;
-    if (ollamaEmbeddingModel !== aiSettings.ollamaEmbeddingModel) {
+    if (ollamaEmbeddingModel !== aiSettings.ollamaEmbeddingModel)
       saveAiSetting('ollamaEmbeddingModel', ollamaEmbeddingModel);
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ollamaEmbeddingModel]);
 
+  // AI Gateway auto-save
   useEffect(() => {
     if (!isMounted.current) return;
-    if (gatewayKey !== (aiSettings.aiGatewayApiKey ?? '')) {
+    if (gatewayKey !== (aiSettings.aiGatewayApiKey ?? ''))
       saveAiSetting('aiGatewayApiKey', gatewayKey);
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gatewayKey]);
 
-  // Get the effective model ID to use (either selected or custom)
-  const getEffectiveModelId = useCallback(() => {
-    if (selectedModel === CUSTOM_MODEL_VALUE && customModelStatus === 'valid') {
-      return customModelInput;
-    }
-    return selectedModel;
-  }, [selectedModel, customModelStatus, customModelInput]);
-
-  // Save model selection when it changes
+  // OpenAI auto-save
   useEffect(() => {
     if (!isMounted.current) return;
-    const effectiveModel = getEffectiveModelId();
+    if (openaiKey !== (aiSettings.openaiApiKey ?? '')) saveAiSetting('openaiApiKey', openaiKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openaiKey]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (openaiModel !== (aiSettings.openaiModel ?? '')) saveAiSetting('openaiModel', openaiModel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openaiModel]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (openaiEmbeddingModel !== (aiSettings.openaiEmbeddingModel ?? ''))
+      saveAiSetting('openaiEmbeddingModel', openaiEmbeddingModel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openaiEmbeddingModel]);
+
+  // Anthropic auto-save
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (anthropicKey !== (aiSettings.anthropicApiKey ?? ''))
+      saveAiSetting('anthropicApiKey', anthropicKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anthropicKey]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (anthropicModel !== (aiSettings.anthropicModel ?? ''))
+      saveAiSetting('anthropicModel', anthropicModel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anthropicModel]);
+
+  // Google auto-save
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (googleKey !== (aiSettings.googleApiKey ?? '')) saveAiSetting('googleApiKey', googleKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleKey]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (googleModel !== (aiSettings.googleModel ?? '')) saveAiSetting('googleModel', googleModel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleModel]);
+
+  // OpenAI Compatible auto-save
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (compatKey !== (aiSettings.openaiCompatibleApiKey ?? ''))
+      saveAiSetting('openaiCompatibleApiKey', compatKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compatKey]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (compatBaseUrl !== (aiSettings.openaiCompatibleBaseUrl ?? ''))
+      saveAiSetting('openaiCompatibleBaseUrl', compatBaseUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compatBaseUrl]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (compatModel !== (aiSettings.openaiCompatibleModel ?? ''))
+      saveAiSetting('openaiCompatibleModel', compatModel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compatModel]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (compatName !== (aiSettings.openaiCompatibleName ?? ''))
+      saveAiSetting('openaiCompatibleName', compatName);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compatName]);
+
+  // Features auto-save
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (xrayEnabled !== (aiSettings.xrayEnabled ?? true)) saveAiSetting('xrayEnabled', xrayEnabled);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [xrayEnabled]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (recapEnabled !== (aiSettings.recapEnabled ?? true))
+      saveAiSetting('recapEnabled', recapEnabled);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recapEnabled]);
+
+  // Gateway model selection
+  const getEffectiveGatewayModelId = useCallback(() => {
+    if (selectedGatewayModel === CUSTOM_MODEL_VALUE && customModelStatus === 'valid') {
+      return customModelInput;
+    }
+    return selectedGatewayModel;
+  }, [selectedGatewayModel, customModelStatus, customModelInput]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    const effectiveModel = getEffectiveGatewayModelId();
     if (effectiveModel !== aiSettings.aiGatewayModel) {
       saveAiSetting('aiGatewayModel', effectiveModel);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedModel, customModelStatus, customModelInput]);
+  }, [selectedGatewayModel, customModelStatus, customModelInput]);
 
-  // Save custom model separately
   useEffect(() => {
     if (!isMounted.current) return;
     const customToSave =
-      selectedModel === CUSTOM_MODEL_VALUE && customModelStatus === 'valid' ? customModelInput : '';
+      selectedGatewayModel === CUSTOM_MODEL_VALUE && customModelStatus === 'valid'
+        ? customModelInput
+        : '';
     if (customToSave !== (aiSettings.aiGatewayCustomModel ?? '')) {
       saveAiSetting('aiGatewayCustomModel', customToSave);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedModel, customModelStatus, customModelInput]);
+  }, [selectedGatewayModel, customModelStatus, customModelInput]);
 
-  const handleModelChange = (value: string) => {
-    setSelectedModel(value);
+  const handleGatewayModelChange = (value: string) => {
+    setSelectedGatewayModel(value);
     if (value !== CUSTOM_MODEL_VALUE) {
       setCustomModelStatus('idle');
       setCustomModelError('');
@@ -247,8 +420,6 @@ const AIPanel: React.FC = () => {
     setCustomModelError('');
 
     try {
-      // Simple validation: try to make a minimal request to verify model exists
-      // This uses the AI Gateway to check if the model is available
       const testSettings: AISettings = {
         ...aiSettings,
         provider: 'ai-gateway',
@@ -261,7 +432,6 @@ const AIPanel: React.FC = () => {
 
       if (isAvailable) {
         setCustomModelStatus('valid');
-        // Set unknown pricing for custom models
         setCustomModelPricing({ input: '?', output: '?' });
       } else {
         setCustomModelStatus('invalid');
@@ -273,22 +443,44 @@ const AIPanel: React.FC = () => {
     }
   };
 
+  const buildTestSettings = (): AISettings => {
+    const base = { ...aiSettings, provider };
+
+    switch (provider) {
+      case 'ollama':
+        return { ...base, ollamaBaseUrl: ollamaUrl, ollamaModel, ollamaEmbeddingModel };
+      case 'ai-gateway':
+        return {
+          ...base,
+          aiGatewayApiKey: gatewayKey,
+          aiGatewayModel: getEffectiveGatewayModelId(),
+        };
+      case 'openai':
+        return { ...base, openaiApiKey: openaiKey, openaiModel, openaiEmbeddingModel };
+      case 'anthropic':
+        return { ...base, anthropicApiKey: anthropicKey, anthropicModel };
+      case 'google':
+        return { ...base, googleApiKey: googleKey, googleModel };
+      case 'openai-compatible':
+        return {
+          ...base,
+          openaiCompatibleApiKey: compatKey,
+          openaiCompatibleBaseUrl: compatBaseUrl,
+          openaiCompatibleModel: compatModel,
+          openaiCompatibleName: compatName,
+        };
+      default:
+        return base;
+    }
+  };
+
   const handleTestConnection = async () => {
     if (!enabled) return;
     setConnectionStatus('testing');
     setErrorMessage('');
 
     try {
-      const effectiveModel = getEffectiveModelId();
-      const testSettings: AISettings = {
-        ...aiSettings,
-        provider,
-        ollamaBaseUrl: ollamaUrl,
-        ollamaModel,
-        ollamaEmbeddingModel,
-        aiGatewayApiKey: gatewayKey,
-        aiGatewayModel: effectiveModel,
-      };
+      const testSettings = buildTestSettings();
       const aiProvider = getAIProvider(testSettings);
       const isHealthy = await aiProvider.healthCheck();
       if (isHealthy) {
@@ -308,6 +500,14 @@ const AIPanel: React.FC = () => {
   };
 
   const disabledSection = !enabled ? 'opacity-50 pointer-events-none select-none' : '';
+
+  const renderNoEmbeddingsNote = () => (
+    <div className='config-item !h-auto py-3'>
+      <span className='text-base-content/60 text-xs'>
+        {_('Embeddings not available — BM25 keyword search will be used for RAG')}
+      </span>
+    </div>
+  );
 
   return (
     <div className='my-4 w-full space-y-6'>
@@ -332,27 +532,20 @@ const AIPanel: React.FC = () => {
         <h2 className='mb-2 font-medium'>{_('Provider')}</h2>
         <div className='card border-base-200 bg-base-100 border shadow'>
           <div className='divide-base-200 divide-y'>
-            <div className='config-item'>
-              <span>{_('Ollama (Local)')}</span>
-              <input
-                type='radio'
-                name='ai-provider'
-                className='radio'
-                checked={provider === 'ollama'}
-                onChange={() => setProvider('ollama')}
+            <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+              <span>{_('AI Provider')}</span>
+              <select
+                className='select select-bordered select-sm bg-base-100 text-base-content w-full'
+                value={provider}
+                onChange={(e) => setProvider(e.target.value as AIProviderName)}
                 disabled={!enabled}
-              />
-            </div>
-            <div className='config-item'>
-              <span>{_('AI Gateway (Cloud)')}</span>
-              <input
-                type='radio'
-                name='ai-provider'
-                className='radio'
-                checked={provider === 'ai-gateway'}
-                onChange={() => setProvider('ai-gateway')}
-                disabled={!enabled}
-              />
+              >
+                {PROVIDER_OPTIONS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
         </div>
@@ -462,11 +655,11 @@ const AIPanel: React.FC = () => {
                 <span>{_('Model')}</span>
                 <select
                   className='select select-bordered select-sm bg-base-100 text-base-content w-full'
-                  value={selectedModel}
-                  onChange={(e) => handleModelChange(e.target.value)}
+                  value={selectedGatewayModel}
+                  onChange={(e) => handleGatewayModelChange(e.target.value)}
                   disabled={!enabled}
                 >
-                  {modelOptions.map((opt) => (
+                  {gatewayModelOptions.map((opt) => (
                     <option key={opt.id} value={opt.id}>
                       {opt.label} — ${opt.inputCost}/M in, ${opt.outputCost}/M out
                     </option>
@@ -475,7 +668,7 @@ const AIPanel: React.FC = () => {
                 </select>
               </div>
 
-              {selectedModel === CUSTOM_MODEL_VALUE && (
+              {selectedGatewayModel === CUSTOM_MODEL_VALUE && (
                 <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
                   <span>{_('Custom Model ID')}</span>
                   <div className='flex w-full gap-2'>
@@ -519,6 +712,257 @@ const AIPanel: React.FC = () => {
           </div>
         </div>
       )}
+
+      {provider === 'openai' && (
+        <div className={clsx('w-full', disabledSection)}>
+          <h2 className='mb-2 font-medium'>{_('OpenAI Configuration')}</h2>
+          <div className='card border-base-200 bg-base-100 border shadow'>
+            <div className='divide-base-200 divide-y'>
+              <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                <div className='flex w-full items-center justify-between'>
+                  <span>{_('API Key')}</span>
+                  <a
+                    href='https://platform.openai.com/api-keys'
+                    target='_blank'
+                    rel='noopener noreferrer'
+                    className={clsx('link text-xs', !enabled && 'pointer-events-none')}
+                  >
+                    {_('Get Key')}
+                  </a>
+                </div>
+                <input
+                  type='password'
+                  className='input input-bordered input-sm w-full'
+                  value={openaiKey}
+                  onChange={(e) => setOpenaiKey(e.target.value)}
+                  placeholder='sk-...'
+                  disabled={!enabled}
+                />
+              </div>
+              <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                <span>{_('Chat Model')}</span>
+                <select
+                  className='select select-bordered select-sm bg-base-100 text-base-content w-full'
+                  value={openaiModel}
+                  onChange={(e) => setOpenaiModel(e.target.value)}
+                  disabled={!enabled}
+                >
+                  {OPENAI_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                <span>{_('Embedding Model')}</span>
+                <select
+                  className='select select-bordered select-sm bg-base-100 text-base-content w-full'
+                  value={openaiEmbeddingModel}
+                  onChange={(e) => setOpenaiEmbeddingModel(e.target.value)}
+                  disabled={!enabled}
+                >
+                  {OPENAI_EMBEDDING_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {provider === 'anthropic' && (
+        <div className={clsx('w-full', disabledSection)}>
+          <h2 className='mb-2 font-medium'>{_('Anthropic Configuration')}</h2>
+          <div className='card border-base-200 bg-base-100 border shadow'>
+            <div className='divide-base-200 divide-y'>
+              <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                <div className='flex w-full items-center justify-between'>
+                  <span>{_('API Key')}</span>
+                  <a
+                    href='https://console.anthropic.com/settings/keys'
+                    target='_blank'
+                    rel='noopener noreferrer'
+                    className={clsx('link text-xs', !enabled && 'pointer-events-none')}
+                  >
+                    {_('Get Key')}
+                  </a>
+                </div>
+                <input
+                  type='password'
+                  className='input input-bordered input-sm w-full'
+                  value={anthropicKey}
+                  onChange={(e) => setAnthropicKey(e.target.value)}
+                  placeholder='sk-ant-...'
+                  disabled={!enabled}
+                />
+              </div>
+              <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                <span>{_('Chat Model')}</span>
+                <select
+                  className='select select-bordered select-sm bg-base-100 text-base-content w-full'
+                  value={anthropicModel}
+                  onChange={(e) => setAnthropicModel(e.target.value)}
+                  disabled={!enabled}
+                >
+                  {ANTHROPIC_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {renderNoEmbeddingsNote()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {provider === 'google' && (
+        <div className={clsx('w-full', disabledSection)}>
+          <h2 className='mb-2 font-medium'>{_('Google Gemini Configuration')}</h2>
+          <div className='card border-base-200 bg-base-100 border shadow'>
+            <div className='divide-base-200 divide-y'>
+              <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                <div className='flex w-full items-center justify-between'>
+                  <span>{_('API Key')}</span>
+                  <a
+                    href='https://aistudio.google.com/apikey'
+                    target='_blank'
+                    rel='noopener noreferrer'
+                    className={clsx('link text-xs', !enabled && 'pointer-events-none')}
+                  >
+                    {_('Get Key')}
+                  </a>
+                </div>
+                <input
+                  type='password'
+                  className='input input-bordered input-sm w-full'
+                  value={googleKey}
+                  onChange={(e) => setGoogleKey(e.target.value)}
+                  placeholder={_('API key')}
+                  disabled={!enabled}
+                />
+              </div>
+              <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                <span>{_('Chat Model')}</span>
+                <select
+                  className='select select-bordered select-sm bg-base-100 text-base-content w-full'
+                  value={googleModel}
+                  onChange={(e) => setGoogleModel(e.target.value)}
+                  disabled={!enabled}
+                >
+                  {GOOGLE_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {renderNoEmbeddingsNote()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {provider === 'openai-compatible' && (
+        <div className={clsx('w-full', disabledSection)}>
+          <h2 className='mb-2 font-medium'>{_('OpenAI Compatible Configuration')}</h2>
+          <p className='text-base-content/70 mb-3 text-sm'>
+            {_('Use any OpenAI-compatible endpoint such as OpenRouter, Together AI, or Groq.')}
+          </p>
+          <div className='card border-base-200 bg-base-100 border shadow'>
+            <div className='divide-base-200 divide-y'>
+              <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                <span>{_('Endpoint URL')}</span>
+                <input
+                  type='text'
+                  className='input input-bordered input-sm w-full'
+                  value={compatBaseUrl}
+                  onChange={(e) => setCompatBaseUrl(e.target.value)}
+                  placeholder='https://openrouter.ai/api/v1'
+                  disabled={!enabled}
+                />
+              </div>
+              <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                <span>{_('API Key')}</span>
+                <input
+                  type='password'
+                  className='input input-bordered input-sm w-full'
+                  value={compatKey}
+                  onChange={(e) => setCompatKey(e.target.value)}
+                  placeholder={_('API key')}
+                  disabled={!enabled}
+                />
+              </div>
+              <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                <span>{_('Model ID')}</span>
+                <input
+                  type='text'
+                  className='input input-bordered input-sm w-full'
+                  value={compatModel}
+                  onChange={(e) => setCompatModel(e.target.value)}
+                  placeholder='meta-llama/llama-4-scout'
+                  disabled={!enabled}
+                />
+              </div>
+              <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                <span>{_('Display Name (optional)')}</span>
+                <input
+                  type='text'
+                  className='input input-bordered input-sm w-full'
+                  value={compatName}
+                  onChange={(e) => setCompatName(e.target.value)}
+                  placeholder='OpenRouter'
+                  disabled={!enabled}
+                />
+              </div>
+              {renderNoEmbeddingsNote()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className={clsx('w-full', disabledSection)}>
+        <h2 className='mb-2 font-medium'>{_('Features')}</h2>
+        <div className='card border-base-200 bg-base-100 border shadow'>
+          <div className='divide-base-200 divide-y'>
+            <div className='config-item'>
+              <div>
+                <span>{_('X-Ray')}</span>
+                <p className='text-base-content/60 text-xs'>
+                  {_('Extract and browse characters, locations, and themes')}
+                </p>
+              </div>
+              <input
+                type='checkbox'
+                className='toggle'
+                checked={xrayEnabled}
+                onChange={() => setXrayEnabled(!xrayEnabled)}
+                disabled={!enabled}
+              />
+            </div>
+            <div className='config-item'>
+              <div>
+                <span>{_('Recap')}</span>
+                <p className='text-base-content/60 text-xs'>
+                  {_('Generate reading summaries to get back into the book')}
+                </p>
+              </div>
+              <input
+                type='checkbox'
+                className='toggle'
+                checked={recapEnabled}
+                onChange={() => setRecapEnabled(!recapEnabled)}
+                disabled={!enabled}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div className={clsx('w-full', disabledSection)}>
         <h2 className='mb-2 font-medium'>{_('Connection')}</h2>

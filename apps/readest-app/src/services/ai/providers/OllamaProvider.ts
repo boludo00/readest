@@ -28,6 +28,10 @@ export class OllamaProvider implements AIProvider {
     return this.ollama.embeddingModel(this.settings.ollamaEmbeddingModel || 'nomic-embed-text');
   }
 
+  supportsEmbeddings(): boolean {
+    return true;
+  }
+
   async isAvailable(): Promise<boolean> {
     try {
       const controller = new AbortController();
