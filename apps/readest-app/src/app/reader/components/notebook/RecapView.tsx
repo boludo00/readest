@@ -7,17 +7,19 @@ import {
   PlusIcon,
   AlertCircleIcon,
   ChevronDownIcon,
+  Trash2Icon,
 } from 'lucide-react';
 
 import { useTranslation } from '@/hooks/useTranslation';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
-import { isBookIndexed, aiStore, aiLogger } from '@/services/ai';
+import { isBookIndexed, aiStore, aiLogger, getAIConfigError } from '@/services/ai';
 import { generateRecap } from '@/services/ai/recapService';
 import type { BookRecap } from '@/services/ai/types';
 
 import { Button } from '@/components/ui/button';
+import AIConfigBanner from './AIConfigBanner';
 
 /** Lightweight markdown renderer for recap text (bold, italic, paragraphs). */
 function renderRecapMarkdown(text: string): React.ReactNode[] {
@@ -71,10 +73,17 @@ interface RecapItemProps {
   recap: BookRecap;
   isExpanded: boolean;
   onToggle: () => void;
+  onDelete: () => void;
   isLatest: boolean;
 }
 
-const RecapItem: React.FC<RecapItemProps> = ({ recap, isExpanded, onToggle, isLatest }) => {
+const RecapItem: React.FC<RecapItemProps> = ({
+  recap,
+  isExpanded,
+  onToggle,
+  onDelete,
+  isLatest,
+}) => {
   const _ = useTranslation();
 
   return (
@@ -109,6 +118,19 @@ const RecapItem: React.FC<RecapItemProps> = ({ recap, isExpanded, onToggle, isLa
         <div className='border-base-content/10 border-t px-3 py-2.5'>
           <div className='text-base-content max-w-none select-text text-sm leading-relaxed'>
             {renderRecapMarkdown(recap.recap)}
+          </div>
+          <div className='border-base-content/10 mt-2 flex justify-end border-t pt-2'>
+            <button
+              type='button'
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              className='text-base-content/40 hover:text-error flex items-center gap-1 text-[10px] transition-colors'
+            >
+              <Trash2Icon className='size-3' />
+              {_('Delete')}
+            </button>
           </div>
         </div>
       )}
@@ -217,6 +239,17 @@ const RecapView: React.FC<RecapViewProps> = ({ bookKey }) => {
     }
   }, [aiSettings, bookHash, bookTitle, authorName, currentPage, totalPages, config?.booknotes]);
 
+  const handleDelete = useCallback(
+    async (recap: BookRecap) => {
+      if (!bookHash) return;
+      await aiStore.deleteRecap(recap.id, bookHash);
+      const allRecaps = [...(await aiStore.getRecaps(bookHash))].reverse();
+      setRecaps(allRecaps);
+      setExpandedIndex(allRecaps.length > 0 ? allRecaps.length - 1 : null);
+    },
+    [bookHash],
+  );
+
   // AI disabled
   if (!aiSettings?.enabled) {
     return (
@@ -233,6 +266,11 @@ const RecapView: React.FC<RecapViewProps> = ({ bookKey }) => {
         <p className='text-muted-foreground text-sm'>{_('Recap is disabled in Settings')}</p>
       </div>
     );
+  }
+
+  // Provider config incomplete (e.g. missing API key) — block before generating
+  if (recaps.length === 0 && getAIConfigError(aiSettings)) {
+    return <AIConfigBanner settings={aiSettings} />;
   }
 
   // Loading
@@ -340,6 +378,7 @@ const RecapView: React.FC<RecapViewProps> = ({ bookKey }) => {
             recap={recap}
             isExpanded={expandedIndex === index}
             onToggle={() => setExpandedIndex(expandedIndex === index ? null : index)}
+            onDelete={() => handleDelete(recap)}
             isLatest={index === recaps.length - 1}
           />
         ))}

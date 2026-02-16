@@ -8,3 +8,5 @@ export * from './logger';
 export * from './entityExtractor';
 export * from './entityLookup';
 export * from './recapService';
+export { validateAIConfig, getAIConfigError } from './utils/providerHelpers';
+export type { AIConfigIssue } from './utils/providerHelpers';

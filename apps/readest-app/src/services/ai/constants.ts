@@ -67,4 +67,6 @@ export const DEFAULT_AI_SETTINGS: AISettings = {
 
   xrayEnabled: true,
   recapEnabled: true,
+  recapMaxChapters: 0, // 0 = all chapters
+  recapDetailLevel: 'normal',
 };

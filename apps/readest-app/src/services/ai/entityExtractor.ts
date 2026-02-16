@@ -1,10 +1,14 @@
-import { streamText } from 'ai';
+import { generateText } from 'ai';
 import { isTauriAppPlatform } from '@/services/environment';
 import { aiStore } from './storage/aiStore';
-import { getAIProvider } from './providers';
 import { aiLogger } from './logger';
 import { buildEntityExtractionPrompt } from './prompts';
-import { getApiKeyForProvider, getModelForProvider } from './utils/providerHelpers';
+import {
+  getApiKeyForProvider,
+  getModelForProvider,
+  getAIConfigError,
+} from './utils/providerHelpers';
+import { getModelForPlatform } from './utils/iosModelFactory';
 import type {
   AISettings,
   BookEntity,
@@ -204,19 +208,15 @@ async function callLLM(
   settings: AISettings,
   abortSignal?: AbortSignal,
 ): Promise<string> {
-  // Tauri or Ollama: use SDK directly (providers handle tauriFetch internally)
+  // Tauri or Ollama: use generateText (non-streaming)
   if (isTauriAppPlatform() || settings.provider === 'ollama') {
-    const provider = getAIProvider(settings);
-    const result = streamText({
-      model: provider.getModel(),
+    const model = await getModelForPlatform(settings);
+    const result = await generateText({
+      model,
       prompt,
       abortSignal,
     });
-    let text = '';
-    for await (const chunk of result.textStream) {
-      text += chunk;
-    }
-    return text;
+    return result.text;
   }
 
   // Web + any cloud provider: use API route proxy with streaming
@@ -267,6 +267,12 @@ export async function extractEntities(
   currentPage?: number,
 ): Promise<BookEntity[]> {
   const startTime = Date.now();
+
+  // Validate provider configuration before making any API calls
+  const configError = getAIConfigError(settings);
+  if (configError) {
+    throw new Error(`AI provider is not configured: ${configError}`);
+  }
 
   // Get all chunks for this book
   const allChunks = await aiStore.getChunks(bookHash);
@@ -356,17 +362,33 @@ export async function extractEntities(
 
   const entities = [...entityMap.values()];
 
-  // Save entities and index
+  // Save entities and index with retry for iOS IndexedDB reliability
   onProgress?.({ current: passes.length, total: passes.length, phase: 'storing' });
 
+  const saveWithRetry = async <T>(fn: () => Promise<T>, label: string, retries = 2): Promise<T> => {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        return await fn();
+      } catch (e) {
+        aiLogger.entity.extractError(
+          bookHash,
+          `${label} attempt ${attempt + 1} failed: ${(e as Error).message}`,
+        );
+        if (attempt === retries) throw e;
+        // Brief delay before retry to let iOS IndexedDB recover
+        await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
+      }
+    }
+    throw new Error(`${label} failed after retries`);
+  };
+
   if (entities.length > 0) {
-    await aiStore.saveEntities(entities);
+    await saveWithRetry(() => aiStore.saveEntities(entities), 'saveEntities');
   }
 
   const maxPage = currentPage ?? Math.max(...chunks.map((c) => c.pageNumber), 0);
   const entityIndex: BookEntityIndex = {
     bookHash,
-    entities,
     extractionModel: getModelForProvider(settings),
     lastUpdated: Date.now(),
     version: 1,
@@ -381,7 +403,7 @@ export async function extractEntities(
     progressPercent: 100,
     maxExtractedPage: maxPage,
   };
-  await aiStore.saveEntityIndex(entityIndex);
+  await saveWithRetry(() => aiStore.saveEntityIndex(entityIndex), 'saveEntityIndex');
 
   aiLogger.entity.extractComplete(bookHash, entities.length, Date.now() - startTime);
   return entities;

@@ -20,6 +20,8 @@ interface XRayState {
   isLoading: boolean;
   isEntityIndexed: boolean;
   isExtracting: boolean;
+  isBackgroundExtracting: boolean;
+  lastExtractedPage: number;
   extractionProgress: EntityExtractionProgress | null;
   extractionError: string | null;
 
@@ -44,6 +46,8 @@ export const useXRayStore = create<XRayState>((set, get) => ({
   isLoading: false,
   isEntityIndexed: false,
   isExtracting: false,
+  isBackgroundExtracting: false,
+  lastExtractedPage: 0,
   extractionProgress: null,
   extractionError: null,
 
@@ -53,12 +57,18 @@ export const useXRayStore = create<XRayState>((set, get) => ({
       const isIndexed = await aiStore.isEntityIndexed(bookHash);
       if (isIndexed) {
         const entities = await aiStore.getEntities(bookHash);
-        set({ entities, isEntityIndexed: true, isLoading: false });
+        const index = await aiStore.getEntityIndex(bookHash);
+        set({
+          entities,
+          isEntityIndexed: true,
+          lastExtractedPage: index?.maxExtractedPage ?? 0,
+          isLoading: false,
+        });
       } else {
-        set({ entities: [], isEntityIndexed: false, isLoading: false });
+        set({ entities: [], isEntityIndexed: false, lastExtractedPage: 0, isLoading: false });
       }
     } catch {
-      set({ entities: [], isEntityIndexed: false, isLoading: false });
+      set({ entities: [], isEntityIndexed: false, lastExtractedPage: 0, isLoading: false });
     }
   },
 
@@ -93,6 +103,8 @@ export const useXRayStore = create<XRayState>((set, get) => ({
       isLoading: false,
       isEntityIndexed: false,
       isExtracting: false,
+      isBackgroundExtracting: false,
+      lastExtractedPage: 0,
       extractionProgress: null,
       extractionError: null,
     }),

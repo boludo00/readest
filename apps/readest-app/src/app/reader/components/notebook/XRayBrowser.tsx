@@ -24,10 +24,12 @@ import {
   getExtractedPage,
   isBookIndexed,
   aiLogger,
+  getAIConfigError,
 } from '@/services/ai';
 import type { EntityType } from '@/services/ai/types';
 
 import { Button } from '@/components/ui/button';
+import AIConfigBanner from './AIConfigBanner';
 import XRayEntityCard from './XRayEntityCard';
 import XRayEntityDetail from './XRayEntityDetail';
 import XRayGraphView from './XRayGraphView';
@@ -69,6 +71,8 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
     isLoading,
     isEntityIndexed,
     isExtracting,
+    isBackgroundExtracting,
+    lastExtractedPage,
     extractionProgress,
     extractionError,
     loadEntities,
@@ -121,13 +125,16 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
         abortRef.current.signal,
         currentPage || undefined,
       );
+      console.log('[XRay] Extraction complete, entities:', result.length);
       useXRayStore.setState({
         entities: result,
         isEntityIndexed: true,
         isExtracting: false,
+        lastExtractedPage: currentPage || 0,
         extractionProgress: null,
       });
     } catch (e) {
+      console.error('[XRay] Extraction failed:', (e as Error).message, (e as Error).stack);
       if ((e as Error).message !== 'Extraction cancelled') {
         setExtractionError((e as Error).message);
         aiLogger.entity.extractError(bookHash, (e as Error).message);
@@ -173,23 +180,54 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
     [entities, selectEntity, currentPage, chapterTitles],
   );
 
-  // Auto-trigger incremental extraction when user has read well past the last extraction
-  const incrementalTriggered = useRef(false);
+  // Seamless background incremental extraction as the user reads.
+  // Runs silently without showing progress UI so the user never notices.
+  const backgroundAbortRef = useRef<AbortController | null>(null);
   useEffect(() => {
-    if (!bookHash || !aiSettings || !isEntityIndexed || isExtracting || !currentPage) return;
-    if (incrementalTriggered.current) return;
+    if (!bookHash || !aiSettings || !isEntityIndexed) return;
+    if (isExtracting || isBackgroundExtracting || !currentPage) return;
 
-    const checkIncremental = async () => {
-      const extractedPage = await getExtractedPage(bookHash);
-      if (extractedPage === null) return;
-      // Trigger if the user has read at least 20 pages beyond the last extraction
-      if (currentPage - extractedPage >= 20) {
-        incrementalTriggered.current = true;
-        handleExtract();
+    const runBackgroundExtraction = async () => {
+      const extractedPage = lastExtractedPage || (await getExtractedPage(bookHash)) || 0;
+      if (extractedPage <= 0 || currentPage - extractedPage < 20) return;
+
+      backgroundAbortRef.current = new AbortController();
+      useXRayStore.setState({ isBackgroundExtracting: true });
+
+      try {
+        const result = await extractEntities(
+          bookHash,
+          aiSettings,
+          undefined,
+          backgroundAbortRef.current.signal,
+          currentPage,
+        );
+        useXRayStore.setState({
+          entities: result,
+          lastExtractedPage: currentPage,
+          isBackgroundExtracting: false,
+        });
+      } catch (e) {
+        if ((e as Error).message !== 'Extraction cancelled') {
+          aiLogger.entity.extractError(bookHash, `background: ${(e as Error).message}`);
+        }
+        useXRayStore.setState({ isBackgroundExtracting: false });
       }
     };
-    checkIncremental();
-  }, [bookHash, aiSettings, isEntityIndexed, isExtracting, currentPage, handleExtract]);
+    runBackgroundExtraction();
+
+    return () => {
+      backgroundAbortRef.current?.abort();
+    };
+  }, [
+    bookHash,
+    aiSettings,
+    isEntityIndexed,
+    isExtracting,
+    isBackgroundExtracting,
+    currentPage,
+    lastExtractedPage,
+  ]);
 
   // Compute subgraph entities for drill-down in graph mode
   // Includes selected entity + all 1-hop neighbors (forward and reverse) of any type
@@ -244,6 +282,11 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
         <p className='text-muted-foreground text-sm'>{_('X-Ray is disabled in Settings')}</p>
       </div>
     );
+  }
+
+  // Provider config incomplete (e.g. missing API key) — only block when not yet extracted
+  if (!isEntityIndexed && getAIConfigError(aiSettings)) {
+    return <AIConfigBanner settings={aiSettings} />;
   }
 
   // Loading state

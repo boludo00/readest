@@ -1,10 +1,14 @@
 import { generateText } from 'ai';
 import { isTauriAppPlatform } from '@/services/environment';
 import { aiStore } from './storage/aiStore';
-import { getAIProvider } from './providers';
 import { aiLogger } from './logger';
 import { buildRecapPrompt } from './prompts';
-import { getApiKeyForProvider, getModelForProvider } from './utils/providerHelpers';
+import {
+  getApiKeyForProvider,
+  getModelForProvider,
+  getAIConfigError,
+} from './utils/providerHelpers';
+import { getModelForPlatform } from './utils/iosModelFactory';
 import type { AISettings, BookRecap, TextChunk } from './types';
 
 async function callLLMForRecap(
@@ -14,8 +18,8 @@ async function callLLMForRecap(
 ): Promise<string> {
   // Tauri or Ollama: use SDK directly
   if (isTauriAppPlatform() || settings.provider === 'ollama') {
-    const provider = getAIProvider(settings);
-    const result = await generateText({ model: provider.getModel(), prompt, abortSignal });
+    const model = await getModelForPlatform(settings);
+    const result = await generateText({ model, prompt, abortSignal });
     return result.text;
   }
 
@@ -156,6 +160,12 @@ export async function generateRecap(
   abortSignal?: AbortSignal,
   forceRefresh?: boolean,
 ): Promise<BookRecap> {
+  // Validate provider configuration before making any API calls
+  const configError = getAIConfigError(settings);
+  if (configError) {
+    throw new Error(`AI provider is not configured: ${configError}`);
+  }
+
   const progressPercent = totalPages > 0 ? Math.round((currentPage / totalPages) * 100) : 0;
 
   aiLogger.recap.generateStart(bookHash, progressPercent);
@@ -175,8 +185,14 @@ export async function generateRecap(
     throw new Error('Book must be indexed before generating a recap');
   }
 
-  // Get previous recap for incremental updates
-  const previousRecap = await aiStore.getLatestRecap(bookHash);
+  // Get previous recap for incremental updates.
+  // Skip incremental path when the detail level has changed so the
+  // entire recap is regenerated at the new verbosity level.
+  const detailLevel = settings.recapDetailLevel ?? 'normal';
+  aiLogger.recap.generateStart(bookHash + `:detail=${detailLevel}`, progressPercent);
+  const latestRecap = await aiStore.getLatestRecap(bookHash);
+  const previousRecap =
+    latestRecap && (latestRecap.detailLevel ?? 'normal') === detailLevel ? latestRecap : undefined;
 
   // Incremental: when a previous recap exists, only send NEW chunks
   // beyond the previous recap's progress to save tokens/resources.
@@ -185,16 +201,30 @@ export async function generateRecap(
       ? Math.round((previousRecap.progressPercent / 100) * totalPages)
       : 0;
 
-  const relevantChunks =
+  let relevantChunks =
     previousRecap && previousPage > 0
       ? allChunks
           .filter((c) => c.pageNumber > previousPage && c.pageNumber <= currentPage)
           .sort((a, b) => a.sectionIndex - b.sectionIndex || a.pageNumber - b.pageNumber)
       : getChunksUpToPage(allChunks, currentPage);
 
-  const chapters = groupChunksByChapter(relevantChunks);
+  let chapters = groupChunksByChapter(relevantChunks);
+
+  // Limit to the last N chapters on the first recap only. Incremental recaps already
+  // scope to new-since-last chapters, so applying the limit there would create gaps
+  // (e.g. old recap covers ch 1-14, limit skips 15-22, new recap covers 23-27).
+  const maxChapters = settings.recapMaxChapters ?? 0;
+  if (!previousRecap && maxChapters > 0 && chapters.length > maxChapters) {
+    chapters = chapters.slice(-maxChapters);
+    const limitedTitles = new Set(chapters.map((c) => c.title));
+    relevantChunks = relevantChunks.filter((c) =>
+      limitedTitles.has(c.chapterTitle || `Section ${c.sectionIndex + 1}`),
+    );
+  }
+
   const chapterTitles = chapters.map((c) => c.title);
-  const contextText = buildContextText(relevantChunks);
+  const maxCharsMap = { brief: 30_000, normal: 60_000, detailed: 100_000 } as const;
+  const contextText = buildContextText(relevantChunks, maxCharsMap[detailLevel]);
 
   const prompt = buildRecapPrompt(
     bookTitle,
@@ -204,6 +234,7 @@ export async function generateRecap(
     chapterTitles,
     highlights,
     previousRecap?.recap,
+    detailLevel,
   );
 
   try {
@@ -217,6 +248,7 @@ export async function generateRecap(
       recap: recapText,
       model: getModelForProvider(settings),
       createdAt,
+      detailLevel,
     };
 
     await aiStore.saveRecap(recap);

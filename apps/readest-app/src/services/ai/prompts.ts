@@ -60,7 +60,11 @@ export function buildRecapPrompt(
   chapterTitles: string[],
   highlights?: string[],
   previousRecap?: string,
+  detailLevel: 'brief' | 'normal' | 'detailed' = 'normal',
 ): string {
+  const sentenceRange =
+    detailLevel === 'brief' ? '1-2' : detailLevel === 'detailed' ? '8-12' : '4-8';
+
   const highlightSection =
     highlights && highlights.length > 0
       ? `\n\nThe reader highlighted these passages:\n${highlights.map((h) => `- "${h}"`).join('\n')}`
@@ -72,6 +76,15 @@ export function buildRecapPrompt(
       : '';
 
   if (previousRecap) {
+    const incrementalDetailInstructions =
+      detailLevel === 'brief'
+        ? `- Write ONLY 1-2 sentences per new chapter — keep it brief
+- Summarize only the single most important event or development per chapter
+- Do NOT include minor details, side plots, or character descriptions`
+        : detailLevel === 'detailed'
+          ? '- Include key plot events, character decisions, motivations, thematic elements, and notable quotes from the new passages'
+          : '- Include key plot events, character decisions, and specific details from the new passages';
+
     return `You are Readest, helping a reader get back into "${bookTitle}"${authorName ? ` by ${authorName}` : ''}.
 
 The reader is ${progressPercent}% through the book.${chapterList}${highlightSection}
@@ -83,8 +96,8 @@ ${previousRecap}
 
 INSTRUCTIONS for the new content to append:
 - Add new chapter recaps AFTER the existing ones, BEFORE the "Where we are now" section
-- Use the same format: **bold chapter heading** followed by 4-8 detailed sentences
-- Include key plot events, character decisions, and specific details from the new passages
+- Use the same format: **bold chapter heading** followed by ${sentenceRange} sentences
+${incrementalDetailInstructions}
 - Replace the old "Where we are now" section with an updated one reflecting the latest state
 - ONLY use information from the provided passages, never from external knowledge
 
@@ -93,15 +106,53 @@ ${bookTextContext}
 </BOOK_PASSAGES>`;
   }
 
+  if (detailLevel === 'brief') {
+    return `You are Readest, helping a reader get back into "${bookTitle}"${authorName ? ` by ${authorName}` : ''}.
+
+The reader is ${progressPercent}% through the book.${chapterList}${highlightSection}
+
+Based ONLY on the book passages below, write a SHORT chapter-by-chapter recap of what has happened so far. The recap should:
+- Use markdown format with a **bold chapter heading** for each chapter
+- Write ONLY 1-2 sentences per chapter — keep it brief and concise
+- Summarize only the single most important event or development per chapter
+- Do NOT include minor details, side plots, or character descriptions
+- Cover every chapter listed above — do NOT skip any
+- Use the exact chapter titles from the passages as headings
+- End with a single "Where we are now" sentence
+- ONLY use information from the provided passages, never from external knowledge
+
+Example format:
+**Prologue: Title**
+One sentence summarizing the key event.
+
+**Chapter One: Title**
+One to two sentences covering what happened.
+
+*(continue for each chapter...)*
+
+**Where we are now:** One sentence about the current state.
+
+<BOOK_PASSAGES>
+${bookTextContext}
+</BOOK_PASSAGES>`;
+  }
+
+  const initialDetailInstructions =
+    detailLevel === 'detailed'
+      ? `- Include key plot events, turning points, revelations, and character decisions (e.g., battles, deaths, discoveries, betrayals, major conversations)
+- Include character motivations, thematic elements, and notable quotes
+- Name the characters involved and describe WHAT specifically happened, not just vague summaries`
+      : `- Include key plot events, turning points, revelations, and character decisions (e.g., battles, deaths, discoveries, betrayals, major conversations)
+- Name the characters involved and describe WHAT specifically happened, not just vague summaries`;
+
   return `You are Readest, helping a reader get back into "${bookTitle}"${authorName ? ` by ${authorName}` : ''}.
 
 The reader is ${progressPercent}% through the book.${chapterList}${highlightSection}
 
 Based ONLY on the book passages below, write a detailed chapter-by-chapter recap of what has happened so far. The recap should:
 - Use markdown format with a **bold chapter heading** for each chapter
-- Write 4-8 sentences per chapter — be thorough and specific
-- Include key plot events, turning points, revelations, and character decisions (e.g., battles, deaths, discoveries, betrayals, major conversations)
-- Name the characters involved and describe WHAT specifically happened, not just vague summaries
+- Write ${sentenceRange} sentences per chapter — be thorough and specific
+${initialDetailInstructions}
 - Cover every chapter listed above — do NOT skip any
 - Use the exact chapter titles from the passages as headings
 - End with a brief "Where we are now" section about the current state of things and unresolved tensions

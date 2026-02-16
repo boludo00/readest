@@ -23,6 +23,7 @@ import {
   getLastSources,
   clearLastSources,
   getIndexDiagnostics,
+  getAIConfigError,
 } from '@/services/ai';
 import type { EmbeddingProgress, AISettings, AIMessage, BookEntity } from '@/services/ai/types';
 import type { IndexDiagnostics } from '@/services/ai/ragService';
@@ -31,6 +32,7 @@ import { useEnv } from '@/context/EnvContext';
 import { Button } from '@/components/ui/button';
 import { Loader2Icon, BookOpenIcon } from 'lucide-react';
 import { Thread } from '@/components/assistant/Thread';
+import AIConfigBanner from './AIConfigBanner';
 
 // Helper function to convert AIMessage array to ExportedMessageRepository format
 // Each message needs to be wrapped with { message, parentId } structure
@@ -360,6 +362,11 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
         <p className='text-muted-foreground text-sm'>{_('Enable AI in Settings')}</p>
       </div>
     );
+  }
+
+  // Provider config incomplete (e.g. missing API key) — block before indexing/chatting
+  if (!isIndexed && getAIConfigError(aiSettings)) {
+    return <AIConfigBanner settings={aiSettings} />;
   }
 
   // show nothing while checking index status to prevent flicker

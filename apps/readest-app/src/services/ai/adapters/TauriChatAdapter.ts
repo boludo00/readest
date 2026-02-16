@@ -1,11 +1,15 @@
 import { streamText } from 'ai';
 import type { ChatModelAdapter, ChatModelRunResult } from '@assistant-ui/react';
 import { isTauriAppPlatform } from '@/services/environment';
-import { getAIProvider } from '../providers';
 import { hybridSearch, isBookIndexed } from '../ragService';
 import { aiLogger } from '../logger';
 import { buildSystemPrompt } from '../prompts';
-import { getApiKeyForProvider, getModelForProvider } from '../utils/providerHelpers';
+import {
+  getApiKeyForProvider,
+  getModelForProvider,
+  getAIConfigError,
+} from '../utils/providerHelpers';
+import { getModelForPlatform } from '../utils/iosModelFactory';
 import type { AISettings, BookEntity, ScoredChunk } from '../types';
 
 let lastSources: ScoredChunk[] = [];
@@ -71,7 +75,13 @@ export function createTauriAdapter(getOptions: () => TauriAdapterOptions): ChatM
     async *run({ messages, abortSignal }): AsyncGenerator<ChatModelRunResult> {
       const options = getOptions();
       const { settings, bookHash, bookTitle, authorName, currentPage } = options;
-      const provider = getAIProvider(settings);
+
+      // Validate provider configuration before making any API calls
+      const configError = getAIConfigError(settings);
+      if (configError) {
+        throw new Error(`AI provider is not configured: ${configError}`);
+      }
+
       let chunks: ScoredChunk[] = [];
 
       const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
@@ -117,7 +127,7 @@ export function createTauriAdapter(getOptions: () => TauriAdapterOptions): ChatM
       }));
 
       try {
-        // Tauri: always use SDK directly (providers use tauriFetch)
+        // Tauri: use SDK directly (on iOS, with native fetch to bypass IPC)
         // Ollama: always use SDK directly (local, no CORS)
         // Web + cloud providers: proxy via API route (CORS)
         const useDirectSdk = isTauriAppPlatform() || settings.provider === 'ollama';
@@ -135,8 +145,9 @@ export function createTauriAdapter(getOptions: () => TauriAdapterOptions): ChatM
             yield { content: [{ type: 'text', text }] };
           }
         } else {
+          const model = await getModelForPlatform(settings);
           const result = streamText({
-            model: provider.getModel(),
+            model,
             system: systemPrompt,
             messages: aiMessages,
             abortSignal,

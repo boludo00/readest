@@ -68,7 +68,16 @@ class AIStore {
   }
 
   private async openDB(): Promise<IDBDatabase> {
-    if (this.db) return this.db;
+    if (this.db) {
+      try {
+        // Verify the connection is still alive (iOS WKWebView can drop it)
+        this.db.transaction(META_STORE, 'readonly');
+        return this.db;
+      } catch {
+        aiLogger.store.error('openDB', 'Stale IDB connection, reconnecting');
+        this.db = null;
+      }
+    }
     return new Promise((resolve, reject) => {
       const request = indexedDB.open(DB_NAME, DB_VERSION);
       request.onerror = () => {
@@ -672,6 +681,22 @@ class AIStore {
     const recaps = await this.getRecaps(bookHash);
     const TOLERANCE = 5;
     return recaps.find((r) => Math.abs(r.progressPercent - progressPercent) <= TOLERANCE) || null;
+  }
+
+  async deleteRecap(id: string, bookHash: string): Promise<void> {
+    const db = await this.openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(RECAPS_STORE, 'readwrite');
+      tx.objectStore(RECAPS_STORE).delete(id);
+      tx.oncomplete = () => {
+        this.recapCache.delete(bookHash);
+        resolve();
+      };
+      tx.onerror = () => {
+        aiLogger.store.error('deleteRecap', tx.error?.message || 'TX error');
+        reject(tx.error);
+      };
+    });
   }
 }
 

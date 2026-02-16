@@ -59,6 +59,8 @@ export interface AISettings {
 
   xrayEnabled: boolean;
   recapEnabled: boolean;
+  recapMaxChapters: number; // 0 = all chapters, N = last N chapters
+  recapDetailLevel: 'brief' | 'normal' | 'detailed';
 }
 
 // --- X-Ray Entity Types ---
@@ -88,7 +90,6 @@ export interface BookEntity {
 
 export interface BookEntityIndex {
   bookHash: string;
-  entities: BookEntity[];
   extractionModel: string;
   lastUpdated: number;
   version: number;
@@ -121,6 +122,7 @@ export interface BookRecap {
   recap: string;
   model: string;
   createdAt: number;
+  detailLevel?: 'brief' | 'normal' | 'detailed';
 }
 
 export interface TextChunk {
