@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useEnv } from '@/context/EnvContext';
+import { useAuth } from '@/context/AuthContext';
 import { useSyncContext } from '@/context/SyncContext';
 import { SyncData, SyncOp, SyncResult, SyncType } from '@/libs/sync';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
-import { transformBookConfigFromDB } from '@/utils/transform';
-import { transformBookNoteFromDB } from '@/utils/transform';
-import { transformBookFromDB } from '@/utils/transform';
+import {
+  transformBookConfigFromDB,
+  transformBookNoteFromDB,
+  transformBookFromDB,
+} from '@/utils/transform';
 import { DBBook, DBBookConfig, DBBookNote } from '@/types/records';
 import { Book, BookConfig, BookDataRecord, BookNote } from '@/types/book';
-import { navigateToLogin } from '@/utils/nav';
 import { useReaderStore } from '@/store/readerStore';
 
 const transformsFromDB = {
@@ -36,8 +37,10 @@ const computeMaxTimestamp = (records: BookDataRecord[]): number => {
 
 const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
 export function useSync(bookKey?: string) {
-  const router = useRouter();
   const { envConfig } = useEnv();
+  const { isAuthReady } = useAuth();
+  const isAuthReadyRef = useRef(isAuthReady);
+  isAuthReadyRef.current = isAuthReady;
   const { settings, setSettings, saveSettings } = useSettingsStore();
   const { getConfig, setConfig } = useBookDataStore();
   const { setIsSyncing } = useReaderStore();
@@ -103,6 +106,12 @@ export function useSync(bookKey?: string) {
     bookId?: string,
     metaHash?: string,
   ) => {
+    // Don't attempt sync until AuthContext has finished initialising.
+    // On iOS/Tauri the JWT stored in localStorage may be expired; syncSession
+    // refreshes it, but if we fire before that completes we'll get a 403 and
+    // the old code would redirect to /auth — causing the visible "app reload."
+    if (!isAuthReadyRef.current) return 0;
+
     setSyncing(true);
     setSyncError(null);
 
@@ -142,15 +151,19 @@ export function useSync(bookKey?: string) {
       }
       return records?.filter((rec) => !rec.deleted_at).length || 0;
     } catch (err: unknown) {
-      console.error(err);
       if (err instanceof Error) {
-        if (err.message.includes('Not authenticated') && settings.keepLogin) {
-          settings.keepLogin = false;
-          setSettings(settings);
-          navigateToLogin(router);
+        // Log at warn level — background sync auth failures are expected when
+        // the JWT expires (especially on iOS where cookies don't persist).
+        // We intentionally do NOT redirect to /auth here; automatic background
+        // sync should never hijack the user's navigation.
+        if (err.message.includes('Not authenticated')) {
+          console.warn(`[Sync] Auth expired for ${type} pull — skipping`);
+        } else {
+          console.error(err);
         }
         setSyncError(err.message || `Error pulling ${type}`);
       } else {
+        console.error(err);
         setSyncError(`Error pulling ${type}`);
       }
       return 0;
@@ -161,6 +174,8 @@ export function useSync(bookKey?: string) {
   };
 
   const pushChanges = async (payload: SyncData) => {
+    if (!isAuthReadyRef.current) return;
+
     setSyncing(true);
     setSyncError(null);
 

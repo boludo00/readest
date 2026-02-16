@@ -164,8 +164,14 @@ export const initSystemThemeListener = (appService: AppService) => {
   const updateColorTheme = async () => {
     let systemIsDarkMode;
     if (appService.isIOSApp) {
-      const res = await getSystemColorScheme();
-      systemIsDarkMode = res.colorScheme === 'dark';
+      try {
+        const res = await getSystemColorScheme();
+        systemIsDarkMode = res.colorScheme === 'dark';
+      } catch {
+        // IPC bridge may not be ready during WebView transitions (keyboard, visibility).
+        // Fall back to the CSS media query which is always available.
+        systemIsDarkMode = mediaQuery.matches;
+      }
     } else {
       systemIsDarkMode = mediaQuery.matches;
     }
