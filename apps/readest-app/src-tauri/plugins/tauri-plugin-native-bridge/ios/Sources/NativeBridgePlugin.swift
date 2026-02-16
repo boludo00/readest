@@ -428,6 +428,8 @@ class NativeBridgePlugin: Plugin {
     self.webView = webview
     logger.log("NativeBridgePlugin loaded")
 
+    disableInlinePredictions(for: webview)
+
     webViewLifecycleManager = WebViewLifecycleManager()
     webViewLifecycleManager?.startMonitoring(webView: webview)
     logger.log("NativeBridgePlugin: WebView lifecycle monitoring activated")
@@ -491,6 +493,28 @@ class NativeBridgePlugin: Plugin {
     } else {
       logger.warning("Cannot activate volume key interception: webView is nil")
     }
+  }
+
+  private func disableInlinePredictions(for webView: WKWebView) {
+    let removeTextInteractions = {
+      for subview in webView.scrollView.subviews {
+        let className = NSStringFromClass(type(of: subview))
+        guard className.contains("WKContentView") else { continue }
+        var removed = 0
+        for interaction in subview.interactions {
+          if interaction is UITextInteraction {
+            subview.removeInteraction(interaction)
+            removed += 1
+          }
+        }
+        if removed > 0 {
+          logger.log("NativeBridgePlugin: Removed \(removed) UITextInteraction(s) to suppress RTI session errors")
+        }
+      }
+    }
+    DispatchQueue.main.async { removeTextInteractions() }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { removeTextInteractions() }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { removeTextInteractions() }
   }
 
   deinit {

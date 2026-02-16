@@ -2,24 +2,23 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
-import { useThemeStore } from '@/store/themeStore';
 import { useTranslation } from '@/hooks/useTranslation';
-import { supabase } from '@/utils/supabase';
+import { appwriteAccount } from '@/utils/appwrite';
 
 export default function UpdateEmailPage() {
   const _ = useTranslation();
   const router = useRouter();
   const { user } = useAuth();
-  const { isDarkMode } = useThemeStore();
 
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!user) {
-      router.push('/login');
+      router.push('/auth');
     }
   }, [user, router]);
 
@@ -30,18 +29,11 @@ export default function UpdateEmailPage() {
     setError('');
 
     try {
-      const { error: updateError } = await supabase.auth.updateUser({
-        email: email,
-      });
+      await appwriteAccount.updateEmail(email, password);
 
-      if (updateError) throw updateError;
-
-      setMessage(
-        _(
-          'Confirmation email sent! Please check your old and new email addresses to confirm the change.',
-        ),
-      );
+      setMessage(_('Your email has been updated successfully.'));
       setEmail('');
+      setPassword('');
     } catch (err) {
       setError(err instanceof Error ? err.message : _('Failed to update email'));
     } finally {
@@ -52,13 +44,10 @@ export default function UpdateEmailPage() {
   return (
     <div className='flex min-h-screen items-center justify-center'>
       <div className='w-full max-w-md p-8'>
-        <div className={`rounded-md p-8`}>
+        <div className='rounded-md p-8'>
           <form onSubmit={handleSubmit} className='space-y-6'>
             <div className='space-y-1'>
-              <label
-                htmlFor='email'
-                className={`block text-sm font-normal ${isDarkMode ? 'text-gray-300' : 'text-gray-400'}`}
-              >
+              <label htmlFor='email' className='text-base-content/60 block text-sm font-normal'>
                 {_('New Email')}
               </label>
               <input
@@ -69,29 +58,42 @@ export default function UpdateEmailPage() {
                 placeholder={_('Your new email')}
                 required
                 disabled={loading}
-                className={`w-full rounded-md border bg-transparent px-4 py-2.5 focus:outline-none focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50 ${isDarkMode ? 'text-gray-300' : 'text-gray-400'}`}
+                className='border-base-300 bg-base-100 text-base-content w-full rounded-md border px-4 py-2.5 focus:outline-none focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50'
               />
             </div>
 
-            {error && <div className={`text-sm text-red-500`}>{error}</div>}
+            <div className='space-y-1'>
+              <label htmlFor='password' className='text-base-content/60 block text-sm font-normal'>
+                {_('Current Password')}
+              </label>
+              <input
+                id='password'
+                type='password'
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={_('Your current password')}
+                required
+                disabled={loading}
+                className='border-base-300 bg-base-100 text-base-content w-full rounded-md border px-4 py-2.5 focus:outline-none focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50'
+              />
+            </div>
 
-            {message && <div className={`text-base-content text-sm`}>{message}</div>}
+            {error && <div className='text-sm text-red-500'>{error}</div>}
+
+            {message && <div className='text-base-content text-sm'>{message}</div>}
 
             <button
               type='submit'
-              disabled={loading || !email}
-              className={`w-full rounded-md bg-green-400 px-4 py-2.5 font-medium text-white transition-colors hover:bg-green-500 disabled:cursor-not-allowed`}
+              disabled={loading || !email || !password}
+              className='w-full rounded-md bg-green-400 px-4 py-2.5 font-medium text-white transition-colors hover:bg-green-500 disabled:cursor-not-allowed'
             >
               {loading ? _('Updating email ...') : _('Update email')}
             </button>
 
             <button
+              type='button'
               onClick={() => router.back()}
-              className={`flex w-full items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm transition-colors ${
-                isDarkMode
-                  ? 'border-gray-600 text-gray-300 hover:bg-gray-800'
-                  : 'border-gray-300 text-gray-700 hover:bg-gray-100'
-              }`}
+              className='border-base-300 text-base-content/70 hover:bg-base-200 flex w-full items-center justify-center gap-2 rounded-md border px-4 py-2.5 text-sm transition-colors'
             >
               <svg
                 xmlns='http://www.w3.org/2000/svg'
@@ -112,7 +114,7 @@ export default function UpdateEmailPage() {
           </form>
 
           {user?.email && (
-            <div className={`mt-6 text-center text-sm text-gray-300`}>
+            <div className='text-base-content/50 mt-6 text-center text-sm'>
               {_('Current email')}: {user.email}
             </div>
           )}

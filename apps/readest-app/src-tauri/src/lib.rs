@@ -288,12 +288,67 @@ pub fn run() {
             #[cfg(not(desktop))]
             let updater_disabled = false;
 
+            #[cfg(target_os = "ios")]
+            let is_ios = true;
+            #[cfg(not(target_os = "ios"))]
+            let is_ios = false;
+
             let init_script = format!(
                 r#"
                     if ({is_eink}) window.__READEST_IS_EINK = true;
                     if ({cli_access}) window.__READEST_CLI_ACCESS = true;
                     if ({is_appimage}) window.__READEST_IS_APPIMAGE = true;
                     if ({updater_disabled}) window.__READEST_UPDATER_DISABLED = true;
+
+                    // Suppress iOS RTI text input sessions on input elements only.
+                    // IMPORTANT: Do NOT set these attributes on <html> or <body> —
+                    // that causes React hydration mismatches which crash the app.
+                    if ({is_ios}) {{
+                        (function() {{
+                            var attrs = {{
+                                'autocomplete': 'off',
+                                'autocorrect': 'off',
+                                'autocapitalize': 'off',
+                                'spellcheck': 'false',
+                                'writingsuggestions': 'false'
+                            }};
+                            function suppress(el) {{
+                                if (!el) return;
+                                for (var k in attrs) el.setAttribute(k, attrs[k]);
+                            }}
+                            var obs = new MutationObserver(function(muts) {{
+                                muts.forEach(function(m) {{
+                                    m.addedNodes.forEach(function(n) {{
+                                        if (n.nodeType !== 1) return;
+                                        if (n.tagName === 'INPUT' || n.tagName === 'TEXTAREA') suppress(n);
+                                        if (n.querySelectorAll) {{
+                                            n.querySelectorAll('input,textarea').forEach(suppress);
+                                        }}
+                                    }});
+                                }});
+                            }});
+                            document.addEventListener('DOMContentLoaded', function() {{
+                                document.querySelectorAll('input,textarea').forEach(suppress);
+                                obs.observe(document.body || document.documentElement,
+                                    {{ childList: true, subtree: true }});
+                            }});
+                        }})();
+                    }}
+
+                    // Surface uncaught errors to the dev server terminal
+                    window.onerror = function(msg, src, line, col, err) {{
+                        var stack = err && err.stack ? err.stack.split('\\n').slice(0, 5).join(' <- ') : 'no stack';
+                        var info = encodeURIComponent(msg + ' @' + src + ':' + line + ':' + col + ' STACK:' + stack);
+                        fetch('/__readest_error?e=' + info).catch(function(){{}});
+                    }};
+                    window.addEventListener('unhandledrejection', function(ev) {{
+                        var err = ev.reason;
+                        var msg = err instanceof Error ? err.message : String(err);
+                        var stack = err instanceof Error && err.stack ? err.stack.split('\\n').slice(0, 5).join(' <- ') : 'no stack';
+                        var info = encodeURIComponent('UnhandledRejection: ' + msg + ' STACK:' + stack);
+                        fetch('/__readest_error?e=' + info).catch(function(){{}});
+                    }});
+
                     window.addEventListener('DOMContentLoaded', function() {{
                         document.documentElement.classList.add('edge-to-edge');
                         const isTauriLocal = window.location.protocol === 'tauri:' ||
@@ -318,7 +373,8 @@ pub fn run() {
                 is_eink = is_eink,
                 cli_access = cli_access,
                 is_appimage = is_appimage,
-                updater_disabled = updater_disabled
+                updater_disabled = updater_disabled,
+                is_ios = is_ios
             );
 
             let app_handle = app.handle().clone();

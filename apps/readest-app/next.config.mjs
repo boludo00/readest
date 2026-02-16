@@ -59,6 +59,17 @@ const nextConfig = {
           'marked',
         ]),
   ],
+  async rewrites() {
+    if (!isDev) return [];
+    const appwriteEndpoint =
+      process.env['NEXT_PUBLIC_APPWRITE_ENDPOINT'] || 'https://cloud.appwrite.io/v1';
+    return [
+      {
+        source: '/appwrite/:path*',
+        destination: `${appwriteEndpoint}/:path*`,
+      },
+    ];
+  },
   async headers() {
     return [
       {

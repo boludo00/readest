@@ -1,33 +1,28 @@
-import { createClient } from '@supabase/supabase-js';
+/**
+ * Legacy Supabase compatibility stubs.
+ * These are retained so that out-of-scope modules (storage, payments, stripe)
+ * continue to compile. The returned clients are non-functional; any call will
+ * throw at runtime. Remove this file once those modules are fully migrated.
+ */
 
-const supabaseUrl =
-  process.env['NEXT_PUBLIC_SUPABASE_URL'] ||
-  atob(process.env['NEXT_PUBLIC_DEFAULT_SUPABASE_URL_BASE64']!);
-const supabaseAnonKey =
-  process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'] ||
-  atob(process.env['NEXT_PUBLIC_DEFAULT_SUPABASE_KEY_BASE64']!);
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-export const createSupabaseClient = (accessToken?: string) => {
-  return createClient(supabaseUrl, supabaseAnonKey, {
-    global: {
-      headers: accessToken
-        ? {
-            Authorization: `Bearer ${accessToken}`,
-          }
-        : {},
-    },
-  });
+const throwNotMigrated = (): never => {
+  throw new Error('Supabase has been replaced by Appwrite. This code path is not yet migrated.');
 };
 
-export const createSupabaseAdminClient = () => {
-  const supabaseAdminKey = process.env['SUPABASE_ADMIN_KEY'] || '';
-  return createClient(supabaseUrl, supabaseAdminKey, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-    },
-  });
+const proxyHandler: ProxyHandler<object> = {
+  get: () => {
+    return new Proxy(() => throwNotMigrated(), proxyHandler);
+  },
+  apply: () => throwNotMigrated(),
 };
+
+const createDeadProxy = (): unknown => new Proxy({}, proxyHandler);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const supabase = createDeadProxy() as any;
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const createSupabaseClient = (_accessToken?: string): any => createDeadProxy();
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const createSupabaseAdminClient = (): any => createDeadProxy();

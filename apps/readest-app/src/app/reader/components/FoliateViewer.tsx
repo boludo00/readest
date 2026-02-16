@@ -69,6 +69,23 @@ declare global {
   }
 }
 
+const SUGGESTION_SUPPRESSION_ATTRS: Record<string, string> = {
+  autocomplete: 'off',
+  autocorrect: 'off',
+  autocapitalize: 'off',
+  spellcheck: 'false',
+  writingsuggestions: 'false',
+};
+
+const suppressIOSTextSuggestions = (doc: Document) => {
+  for (const el of [doc.documentElement, doc.body]) {
+    if (!el) continue;
+    for (const [attr, value] of Object.entries(SUGGESTION_SUPPRESSION_ATTRS)) {
+      el.setAttribute(attr, value);
+    }
+  }
+};
+
 const FoliateViewer: React.FC<{
   bookKey: string;
   bookDoc: BookDoc;
@@ -99,7 +116,7 @@ const FoliateViewer: React.FC<{
   const [loading, setLoading] = useState(false);
   const docLoaded = useRef(false);
 
-  useAutoFocus<HTMLDivElement>({ ref: containerRef });
+  useAutoFocus<HTMLDivElement>({ ref: containerRef, condition: !appService?.isIOSApp });
 
   useDiscordPresence(
     bookData?.book || null,
@@ -232,6 +249,10 @@ const FoliateViewer: React.FC<{
           .filter((item) => !item.deletedAt && item.type === 'annotation' && item.style)
           .forEach((annotation) => viewRef.current?.addAnnotation(annotation));
       }, 100);
+
+      if (appService?.isIOSApp) {
+        suppressIOSTextSuggestions(detail.doc);
+      }
 
       if (!detail.doc.isEventListenersAdded) {
         // listened events in iframes are posted to the main window

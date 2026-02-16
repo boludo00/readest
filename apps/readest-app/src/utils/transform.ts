@@ -11,7 +11,10 @@ import {
 import { DBBookConfig, DBBook, DBBookNote } from '@/types/records';
 import { sanitizeString } from './sanitize';
 
-export const transformBookConfigToDB = (bookConfig: unknown, userId: string): DBBookConfig => {
+export const transformBookConfigToDB = (
+  bookConfig: BookConfig | Record<string, unknown>,
+  userId: string,
+): DBBookConfig => {
   const {
     bookHash,
     metaHash,
@@ -59,7 +62,7 @@ export const transformBookConfigFromDB = (dbBookConfig: DBBookConfig): BookConfi
   } as BookConfig;
 };
 
-export const transformBookToDB = (book: unknown, userId: string): DBBook => {
+export const transformBookToDB = (book: Book | Record<string, unknown>, userId: string): DBBook => {
   const {
     hash,
     metaHash,
@@ -140,7 +143,10 @@ export const transformBookFromDB = (dbBook: DBBook): Book => {
   };
 };
 
-export const transformBookNoteToDB = (bookNote: unknown, userId: string): DBBookNote => {
+export const transformBookNoteToDB = (
+  bookNote: BookNote | Record<string, unknown>,
+  userId: string,
+): DBBookNote => {
   const {
     bookHash,
     metaHash,
@@ -160,7 +166,7 @@ export const transformBookNoteToDB = (bookNote: unknown, userId: string): DBBook
     user_id: userId,
     book_hash: bookHash!,
     meta_hash: metaHash,
-    id,
+    note_id: id,
     type,
     cfi,
     text: sanitizeString(text),
@@ -178,7 +184,7 @@ export const transformBookNoteFromDB = (dbBookNote: DBBookNote): BookNote => {
   const {
     book_hash,
     meta_hash,
-    id,
+    note_id,
     type,
     cfi,
     text,
@@ -193,7 +199,7 @@ export const transformBookNoteFromDB = (dbBookNote: DBBookNote): BookNote => {
   return {
     bookHash: book_hash,
     metaHash: meta_hash,
-    id,
+    id: note_id,
     type: type as BookNoteType,
     cfi,
     text,

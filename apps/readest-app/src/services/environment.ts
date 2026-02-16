@@ -18,6 +18,11 @@ export const getNodeBaseUrl = () =>
 export const isMacPlatform = () =>
   typeof window !== 'undefined' && /Mac|iPod|iPhone|iPad/.test(navigator.platform);
 
+export const isIOSTauriApp = () =>
+  isTauriAppPlatform() &&
+  typeof navigator !== 'undefined' &&
+  /iPhone|iPad|iPod/.test(navigator.userAgent);
+
 export const getCommandPaletteShortcut = () => (isMacPlatform() ? '⌘⇧P' : 'Ctrl+Shift+P');
 
 const isWebDevMode = () => process.env['NODE_ENV'] === 'development' && isWebAppPlatform();

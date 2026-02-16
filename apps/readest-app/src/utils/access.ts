@@ -1,44 +1,27 @@
-import { jwtDecode } from 'jwt-decode';
-import { supabase } from '@/utils/supabase';
+import { appwriteAccount } from '@/utils/appwrite';
+import { createAppwriteSessionClient } from '@/utils/appwrite.server';
 import { UserPlan } from '@/types/quota';
 import { DEFAULT_DAILY_TRANSLATION_QUOTA, DEFAULT_STORAGE_QUOTA } from '@/services/constants';
 import { isWebAppPlatform } from '@/services/environment';
 import { getDailyUsage } from '@/services/translators/utils';
 
-interface Token {
-  plan: UserPlan;
-  storage_usage_bytes: number;
-  storage_purchased_bytes: number;
-  [key: string]: string | number;
-}
-
-export const getSubscriptionPlan = (token: string): UserPlan => {
-  const data = jwtDecode<Token>(token) || {};
-  return data['plan'] || 'free';
+export const getSubscriptionPlan = (_token: string): UserPlan => {
+  // Payments are out of scope for Appwrite migration — always return 'free'
+  return 'free';
 };
 
-export const getUserProfilePlan = (token: string): UserPlan => {
-  const data = jwtDecode<Token>(token) || {};
-  let plan = data['plan'] || 'free';
-  if (plan === 'free') {
-    const purchasedQuota = data['storage_purchased_bytes'] || 0;
-    if (purchasedQuota > 0) {
-      plan = 'purchase';
-    }
-  }
-  return plan;
+export const getUserProfilePlan = (_token: string): UserPlan => {
+  return 'free';
 };
 
 export const STORAGE_QUOTA_GRACE_BYTES = 10 * 1024 * 1024; // 10 MB grace
 
-export const getStoragePlanData = (token: string) => {
-  const data = jwtDecode<Token>(token) || {};
-  const plan = data['plan'] || 'free';
-  const usage = data['storage_usage_bytes'] || 0;
-  const purchasedQuota = data['storage_purchased_bytes'] || 0;
+export const getStoragePlanData = (_token: string) => {
+  const plan: UserPlan = 'free';
+  const usage = 0;
   const fixedQuota = parseInt(process.env['NEXT_PUBLIC_STORAGE_FIXED_QUOTA'] || '0');
   const planQuota = fixedQuota || DEFAULT_STORAGE_QUOTA[plan] || DEFAULT_STORAGE_QUOTA['free'];
-  const quota = planQuota + purchasedQuota;
+  const quota = planQuota;
 
   return {
     plan,
@@ -47,9 +30,8 @@ export const getStoragePlanData = (token: string) => {
   };
 };
 
-export const getTranslationPlanData = (token: string) => {
-  const data = jwtDecode<Token>(token) || {};
-  const plan: UserPlan = data['plan'] || 'free';
+export const getTranslationPlanData = (_token: string) => {
+  const plan: UserPlan = 'free';
   const usage = getDailyUsage() || 0;
   const quota = DEFAULT_DAILY_TRANSLATION_QUOTA[plan];
 
@@ -60,9 +42,8 @@ export const getTranslationPlanData = (token: string) => {
   };
 };
 
-export const getDailyTranslationPlanData = (token: string) => {
-  const data = jwtDecode<Token>(token) || {};
-  const plan = data['plan'] || 'free';
+export const getDailyTranslationPlanData = (_token: string) => {
+  const plan: UserPlan = 'free';
   const fixedQuota = parseInt(process.env['NEXT_PUBLIC_TRANSLATION_FIXED_QUOTA'] || '0');
   const quota =
     fixedQuota || DEFAULT_DAILY_TRANSLATION_QUOTA[plan] || DEFAULT_DAILY_TRANSLATION_QUOTA['free'];
@@ -74,34 +55,56 @@ export const getDailyTranslationPlanData = (token: string) => {
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
-  // In browser context there might be two instances of supabase one in the app route
-  // and the other in the pages route, and they might have different sessions
-  // making the access token invalid for API calls. In that case we should use localStorage.
   if (isWebAppPlatform()) {
     return localStorage.getItem('token') ?? null;
   }
-  const { data } = await supabase.auth.getSession();
-  return data?.session?.access_token ?? null;
+  try {
+    const jwtResponse = await appwriteAccount.createJWT();
+    return jwtResponse.jwt;
+  } catch {
+    // Appwrite session cookies may not persist in Tauri WebView (especially iOS).
+    // Fall back to the JWT stored in localStorage by AuthContext.
+    return localStorage.getItem('token') ?? null;
+  }
 };
 
 export const getUserID = async (): Promise<string | null> => {
   if (isWebAppPlatform()) {
-    const user = localStorage.getItem('user') ?? '{}';
-    return JSON.parse(user).id ?? null;
+    try {
+      const raw = localStorage.getItem('user');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed?.$id ?? null;
+    } catch {
+      return null;
+    }
   }
-  const { data } = await supabase.auth.getSession();
-  return data?.session?.user?.id ?? null;
+  try {
+    const user = await appwriteAccount.get();
+    return user.$id;
+  } catch {
+    // Fall back to localStorage when Appwrite session cookies aren't available (iOS WebView)
+    try {
+      const raw = localStorage.getItem('user');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed?.$id ?? null;
+    } catch {
+      return null;
+    }
+  }
 };
 
 export const validateUserAndToken = async (authHeader: string | null | undefined) => {
   if (!authHeader) return {};
 
   const token = authHeader.replace('Bearer ', '');
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser(token);
-
-  if (error || !user) return {};
-  return { user, token };
+  try {
+    const { account } = createAppwriteSessionClient(token);
+    const user = await account.get();
+    if (!user) return {};
+    return { user, token };
+  } catch {
+    return {};
+  }
 };

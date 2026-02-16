@@ -144,6 +144,10 @@ const AIPanel: React.FC = () => {
   // Features state
   const [xrayEnabled, setXrayEnabled] = useState(aiSettings.xrayEnabled ?? true);
   const [recapEnabled, setRecapEnabled] = useState(aiSettings.recapEnabled ?? true);
+  const [recapMaxChapters, setRecapMaxChapters] = useState(aiSettings.recapMaxChapters ?? 0);
+  const [recapDetailLevel, setRecapDetailLevel] = useState<'brief' | 'normal' | 'detailed'>(
+    aiSettings.recapDetailLevel ?? 'normal',
+  );
 
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
   const [errorMessage, setErrorMessage] = useState('');
@@ -228,6 +232,8 @@ const AIPanel: React.FC = () => {
     setCompatName(aiSettings.openaiCompatibleName ?? '');
     setXrayEnabled(aiSettings.xrayEnabled ?? true);
     setRecapEnabled(aiSettings.recapEnabled ?? true);
+    setRecapMaxChapters(aiSettings.recapMaxChapters ?? 0);
+    setRecapDetailLevel(aiSettings.recapDetailLevel ?? 'normal');
     const newSavedCustom = aiSettings.aiGatewayCustomModel ?? '';
     const newIsCustom = newSavedCustom.length > 0;
     setSelectedGatewayModel(
@@ -370,6 +376,20 @@ const AIPanel: React.FC = () => {
       saveAiSetting('recapEnabled', recapEnabled);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recapEnabled]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (recapMaxChapters !== (aiSettings.recapMaxChapters ?? 0))
+      saveAiSetting('recapMaxChapters', recapMaxChapters);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recapMaxChapters]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (recapDetailLevel !== (aiSettings.recapDetailLevel ?? 'normal'))
+      saveAiSetting('recapDetailLevel', recapDetailLevel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recapDetailLevel]);
 
   // Gateway model selection
   const getEffectiveGatewayModelId = useCallback(() => {
@@ -960,6 +980,51 @@ const AIPanel: React.FC = () => {
                 disabled={!enabled}
               />
             </div>
+            {recapEnabled && (
+              <>
+                <div className='config-item'>
+                  <div>
+                    <span>{_('Recap Chapters')}</span>
+                    <p className='text-base-content/60 text-xs'>
+                      {_('Limit recap to the last N chapters (0 = all)')}
+                    </p>
+                  </div>
+                  <select
+                    className='select select-bordered select-sm w-24'
+                    value={recapMaxChapters}
+                    onChange={(e) => setRecapMaxChapters(Number(e.target.value))}
+                    disabled={!enabled}
+                  >
+                    <option value={0}>{_('All')}</option>
+                    <option value={3}>3</option>
+                    <option value={5}>5</option>
+                    <option value={10}>10</option>
+                    <option value={15}>15</option>
+                    <option value={20}>20</option>
+                  </select>
+                </div>
+                <div className='config-item'>
+                  <div>
+                    <span>{_('Recap Detail')}</span>
+                    <p className='text-base-content/60 text-xs'>
+                      {_('Control the verbosity of generated recaps')}
+                    </p>
+                  </div>
+                  <select
+                    className='select select-bordered select-sm w-24'
+                    value={recapDetailLevel}
+                    onChange={(e) =>
+                      setRecapDetailLevel(e.target.value as 'brief' | 'normal' | 'detailed')
+                    }
+                    disabled={!enabled}
+                  >
+                    <option value='brief'>{_('Brief')}</option>
+                    <option value='normal'>{_('Normal')}</option>
+                    <option value='detailed'>{_('Detailed')}</option>
+                  </select>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>

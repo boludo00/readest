@@ -1,4 +1,5 @@
 export interface DBBook {
+  $id?: string;
   user_id: string;
   book_hash: string;
   meta_hash?: string;
@@ -20,6 +21,7 @@ export interface DBBook {
 }
 
 export interface DBBookConfig {
+  $id?: string;
   user_id: string;
   book_hash: string;
   meta_hash?: string;
@@ -35,10 +37,11 @@ export interface DBBookConfig {
 }
 
 export interface DBBookNote {
+  $id?: string;
   user_id: string;
   book_hash: string;
   meta_hash?: string;
-  id: string;
+  note_id: string;
   type: string;
   cfi: string;
   text?: string;

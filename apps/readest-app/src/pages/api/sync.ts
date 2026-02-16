@@ -1,15 +1,21 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { NextRequest, NextResponse } from 'next/server';
-import { PostgrestError } from '@supabase/supabase-js';
-import { createSupabaseClient } from '@/utils/supabase';
+import { ID, Query } from 'node-appwrite';
+import {
+  createAppwriteAdminClient,
+  APPWRITE_DATABASE_ID,
+  COLLECTIONS,
+} from '@/utils/appwrite.server';
 import { BookDataRecord } from '@/types/book';
-import { transformBookConfigToDB } from '@/utils/transform';
-import { transformBookNoteToDB } from '@/utils/transform';
-import { transformBookToDB } from '@/utils/transform';
+import {
+  transformBookConfigToDB,
+  transformBookNoteToDB,
+  transformBookToDB,
+} from '@/utils/transform';
 import { runMiddleware, corsAllMethods } from '@/utils/cors';
 import { SyncData, SyncRecord, SyncResult, SyncType } from '@/libs/sync';
 import { validateUserAndToken } from '@/utils/access';
-import { DBBook, DBBookConfig } from '@/types/records';
+import { DBBook } from '@/types/records';
 
 const transformsToDB = {
   books: transformBookToDB,
@@ -23,16 +29,38 @@ const DBSyncTypeMap = {
   book_configs: 'configs',
 };
 
-type TableName = keyof typeof transformsToDB;
+type CollectionId = keyof typeof transformsToDB;
 
-type DBError = { table: TableName; error: PostgrestError };
+const COLLECTION_IDS: Record<CollectionId, string> = {
+  books: COLLECTIONS.BOOKS,
+  book_notes: COLLECTIONS.BOOK_NOTES,
+  book_configs: COLLECTIONS.BOOK_CONFIGS,
+};
+
+const APPWRITE_META_KEYS = [
+  '$collectionId',
+  '$databaseId',
+  '$createdAt',
+  '$updatedAt',
+  '$permissions',
+];
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const stripAppwriteMeta = (doc: Record<string, any>): Record<string, any> => {
+  const result = { ...doc };
+  for (const key of APPWRITE_META_KEYS) {
+    delete result[key];
+  }
+  return result;
+};
 
 export async function GET(req: NextRequest) {
   const { user, token } = await validateUserAndToken(req.headers.get('authorization'));
   if (!user || !token) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 403 });
   }
-  const supabase = createSupabaseClient(token);
+
+  const { databases } = createAppwriteAdminClient();
+  const databaseId = APPWRITE_DATABASE_ID;
 
   const { searchParams } = new URL(req.url);
   const sinceParam = searchParams.get('since');
@@ -53,45 +81,65 @@ export async function GET(req: NextRequest) {
 
   try {
     const results: SyncResult = { books: [], configs: [], notes: [] };
-    const errors: Record<TableName, DBError | null> = {
+    const errors: Record<CollectionId, string | null> = {
       books: null,
       book_notes: null,
       book_configs: null,
     };
 
-    const queryTables = async (table: TableName, dedupeKeys?: (keyof BookDataRecord)[]) => {
-      const PAGE_SIZE = 1000;
+    const queryCollection = async (
+      collection: CollectionId,
+      dedupeKeys?: (keyof BookDataRecord)[],
+    ) => {
+      const PAGE_SIZE = 100; // Appwrite max per request
       let allRecords: SyncRecord[] = [];
       let offset = 0;
       let hasMore = true;
 
       while (hasMore) {
-        let query = supabase
-          .from(table)
-          .select('*')
-          .eq('user_id', user.id)
-          .range(offset, offset + PAGE_SIZE - 1);
+        const queries: string[] = [
+          Query.equal('user_id', user.$id),
+          Query.limit(PAGE_SIZE),
+          Query.offset(offset),
+          Query.orderDesc('updated_at'),
+        ];
 
         if (bookParam && metaHashParam) {
-          query = query.or(`book_hash.eq.${bookParam},meta_hash.eq.${metaHashParam}`);
+          queries.push(
+            Query.or([
+              Query.equal('book_hash', bookParam),
+              Query.equal('meta_hash', metaHashParam),
+            ]),
+          );
         } else if (bookParam) {
-          query = query.eq('book_hash', bookParam);
+          queries.push(Query.equal('book_hash', bookParam));
         } else if (metaHashParam) {
-          query = query.eq('meta_hash', metaHashParam);
+          queries.push(Query.equal('meta_hash', metaHashParam));
         }
 
-        query = query.or(`updated_at.gt.${sinceIso},deleted_at.gt.${sinceIso}`);
-        query = query.order('updated_at', { ascending: false });
+        queries.push(
+          Query.or([
+            Query.greaterThan('updated_at', sinceIso),
+            Query.greaterThan('deleted_at', sinceIso),
+          ]),
+        );
 
-        console.log('Querying table:', table, 'since:', sinceIso, 'offset:', offset);
+        console.log('Querying collection:', collection, 'since:', sinceIso, 'offset:', offset);
 
-        const { data, error } = await query;
-        if (error) throw { table, error } as DBError;
+        const response = await databases.listDocuments(
+          databaseId,
+          COLLECTION_IDS[collection]!,
+          queries,
+        );
 
-        if (data && data.length > 0) {
-          allRecords = allRecords.concat(data);
+        if (response.documents.length > 0) {
+          // Strip Appwrite metadata fields from documents
+          const docs = response.documents.map(
+            (doc) => stripAppwriteMeta(doc) as unknown as SyncRecord,
+          );
+          allRecords = allRecords.concat(docs);
           offset += PAGE_SIZE;
-          hasMore = data.length === PAGE_SIZE;
+          hasMore = response.documents.length === PAGE_SIZE;
         } else {
           hasMore = false;
         }
@@ -113,17 +161,17 @@ export async function GET(req: NextRequest) {
           }
         });
       }
-      results[DBSyncTypeMap[table] as SyncType] = records || [];
+      results[DBSyncTypeMap[collection] as SyncType] = records || [];
     };
 
     if (!typeParam || typeParam === 'books') {
-      await queryTables('books').catch((err) => (errors['books'] = err));
+      await queryCollection('books').catch((err) => (errors['books'] = String(err)));
       // TODO: Remove this hotfix for the initial race condition for books sync
       if (results.books?.length === 0 && since.getTime() < 1000) {
         const dummyHash = '00000000000000000000000000000000';
         const now = new Date().getTime();
         results.books.push({
-          user_id: user.id,
+          user_id: user.$id,
           id: dummyHash,
           book_hash: dummyHash,
           deleted_at: now,
@@ -140,18 +188,18 @@ export async function GET(req: NextRequest) {
       }
     }
     if (!typeParam || typeParam === 'configs') {
-      await queryTables('book_configs').catch((err) => (errors['book_configs'] = err));
+      await queryCollection('book_configs').catch((err) => (errors['book_configs'] = String(err)));
     }
     if (!typeParam || typeParam === 'notes') {
-      await queryTables('book_notes', ['id']).catch((err) => (errors['book_notes'] = err));
+      await queryCollection('book_notes', ['id']).catch(
+        (err) => (errors['book_notes'] = String(err)),
+      );
     }
 
-    const dbErrors = Object.values(errors).filter((err) => err !== null);
+    const dbErrors = Object.entries(errors).filter(([, err]) => err !== null);
     if (dbErrors.length > 0) {
       console.error('Errors occurred:', dbErrors);
-      const errorMsg = dbErrors
-        .map((err) => `${err.table}: ${err.error.message || 'Unknown error'}`)
-        .join('; ');
+      const errorMsg = dbErrors.map(([table, err]) => `${table}: ${err}`).join('; ');
       return NextResponse.json({ error: errorMsg }, { status: 500 });
     }
 
@@ -162,7 +210,7 @@ export async function GET(req: NextRequest) {
     return response;
   } catch (error: unknown) {
     console.error(error);
-    const errorMessage = (error as PostgrestError).message || 'Unknown error';
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
@@ -172,13 +220,16 @@ export async function POST(req: NextRequest) {
   if (!user || !token) {
     return NextResponse.json({ error: 'Not authenticated' }, { status: 403 });
   }
-  const supabase = createSupabaseClient(token);
+
+  const { databases } = createAppwriteAdminClient();
+  const databaseId = APPWRITE_DATABASE_ID;
   const body = await req.json();
   const { books = [], configs = [], notes = [] } = body as SyncData;
 
   const BATCH_SIZE = 100;
+
   const upsertRecords = async (
-    table: TableName,
+    collection: CollectionId,
     primaryKeys: (keyof BookDataRecord)[],
     records: BookDataRecord[],
   ) => {
@@ -186,111 +237,77 @@ export async function POST(req: NextRequest) {
 
     const allAuthoritativeRecords: BookDataRecord[] = [];
 
-    // Process in batches
     for (let i = 0; i < records.length; i += BATCH_SIZE) {
       const batch = records.slice(i, i + BATCH_SIZE);
 
-      // Transform all records to DB format
       const dbRecords = batch.map((rec) => {
-        const dbRec = transformsToDB[table](rec, user.id);
-        rec.user_id = user.id;
+        const dbRec = transformsToDB[collection](rec, user.$id);
+        rec.user_id = user.$id;
         rec.book_hash = dbRec.book_hash;
         return { original: rec, db: dbRec };
       });
 
-      // Build match conditions for batch
-      const matchConditions = dbRecords.map(({ original }) => {
-        const conditions: Record<string, string | number> = { user_id: user.id };
-        for (const pk of primaryKeys) {
-          conditions[pk] = original[pk]!;
-        }
-        return conditions;
-      });
-
-      // Fetch existing records for this batch
-      const orConditions = matchConditions
-        .map((cond) => {
-          const parts = Object.entries(cond).map(([key, val]) => `${key}.eq.${val}`);
-          return `and(${parts.join(',')})`;
-        })
-        .join(',');
-
-      const { data: serverRecords, error: fetchError } = await supabase
-        .from(table)
-        .select()
-        .or(orConditions);
-
-      if (fetchError) {
-        return { error: fetchError.message };
-      }
-
-      // Create lookup map
-      const serverRecordsMap = new Map<string, BookDataRecord>();
-      (serverRecords || []).forEach((record) => {
-        const key = primaryKeys.map((pk) => record[pk]).join('|');
-        serverRecordsMap.set(key, record);
-      });
-
-      // Separate into inserts and updates
-      const toInsert: (DBBook | DBBookConfig | DBBookConfig)[] = [];
-      const toUpdate: (DBBook | DBBookConfig | DBBookConfig)[] = [];
       const batchAuthoritativeRecords: BookDataRecord[] = [];
 
       for (const { original, db: dbRec } of dbRecords) {
-        const key = primaryKeys.map((pk) => original[pk]).join('|');
-        const serverData = serverRecordsMap.get(key);
+        // Look up existing document
+        const lookupQueries = [Query.equal('user_id', user.$id)];
+        for (const pk of primaryKeys) {
+          const value = original[pk];
+          if (value !== undefined && value !== null) {
+            // Map 'id' key to 'note_id' for book_notes collection
+            const dbKey = collection === 'book_notes' && pk === 'id' ? 'note_id' : pk;
+            lookupQueries.push(Query.equal(dbKey, String(value)));
+          }
+        }
 
-        if (!serverData) {
+        const existing = await databases.listDocuments(
+          databaseId,
+          COLLECTION_IDS[collection]!,
+          lookupQueries,
+        );
+
+        if (existing.documents.length === 0) {
+          // Insert new document
           dbRec.updated_at = new Date().toISOString();
-          toInsert.push(dbRec);
+          // Remove $id from the record before creating
+          const { $id: _, ...createData } = dbRec as DBBook & { $id?: string };
+          const created = await databases.createDocument(
+            databaseId,
+            COLLECTION_IDS[collection]!,
+            ID.unique(),
+            createData,
+          );
+          batchAuthoritativeRecords.push(stripAppwriteMeta(created) as unknown as BookDataRecord);
         } else {
+          const serverData = existing.documents[0]!;
           const clientUpdatedAt = dbRec.updated_at ? new Date(dbRec.updated_at).getTime() : 0;
-          const serverUpdatedAt = serverData.updated_at
-            ? new Date(serverData.updated_at).getTime()
+          const serverUpdatedAt = serverData['updated_at']
+            ? new Date(serverData['updated_at'] as string).getTime()
             : 0;
           const clientDeletedAt = dbRec.deleted_at ? new Date(dbRec.deleted_at).getTime() : 0;
-          const serverDeletedAt = serverData.deleted_at
-            ? new Date(serverData.deleted_at).getTime()
+          const serverDeletedAt = serverData['deleted_at']
+            ? new Date(serverData['deleted_at'] as string).getTime()
             : 0;
           const clientIsNewer =
             clientDeletedAt > serverDeletedAt || clientUpdatedAt > serverUpdatedAt;
 
           if (clientIsNewer) {
-            toUpdate.push(dbRec);
+            // Update existing document
+            const { $id: _, ...updateData } = dbRec as DBBook & { $id?: string };
+            const updated = await databases.updateDocument(
+              databaseId,
+              COLLECTION_IDS[collection]!,
+              serverData.$id,
+              updateData,
+            );
+            batchAuthoritativeRecords.push(stripAppwriteMeta(updated) as unknown as BookDataRecord);
           } else {
-            batchAuthoritativeRecords.push(serverData);
+            batchAuthoritativeRecords.push(
+              stripAppwriteMeta(serverData) as unknown as BookDataRecord,
+            );
           }
         }
-      }
-
-      // Batch insert
-      if (toInsert.length > 0) {
-        const { data: inserted, error: insertError } = await supabase
-          .from(table)
-          .insert(toInsert)
-          .select();
-
-        if (insertError) {
-          console.log(`Failed to insert ${table} records:`, JSON.stringify(toInsert));
-          return { error: insertError.message };
-        }
-        batchAuthoritativeRecords.push(...(inserted || []));
-      }
-
-      // Batch upsert
-      if (toUpdate.length > 0) {
-        const { data: updated, error: updateError } = await supabase
-          .from(table)
-          .upsert(toUpdate, {
-            onConflict: ['user_id', ...primaryKeys].join(','),
-          })
-          .select();
-
-        if (updateError) {
-          console.log(`Failed to update ${table} records:`, JSON.stringify(toUpdate));
-          return { error: updateError.message };
-        }
-        batchAuthoritativeRecords.push(...(updated || []));
       }
 
       allAuthoritativeRecords.push(...batchAuthoritativeRecords);
@@ -306,10 +323,6 @@ export async function POST(req: NextRequest) {
       upsertRecords('book_notes', ['book_hash', 'id'], notes as BookDataRecord[]),
     ]);
 
-    if (booksResult?.error) throw new Error(booksResult.error);
-    if (configsResult?.error) throw new Error(configsResult.error);
-    if (notesResult?.error) throw new Error(notesResult.error);
-
     return NextResponse.json(
       {
         books: booksResult?.data || [],
@@ -320,7 +333,7 @@ export async function POST(req: NextRequest) {
     );
   } catch (error: unknown) {
     console.error(error);
-    const errorMessage = (error as PostgrestError).message || 'Unknown error';
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }
@@ -349,7 +362,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
       const nextReq = new NextRequest(url.toString(), {
         headers: new Headers(req.headers as Record<string, string>),
         method: 'POST',
-        body: JSON.stringify(req.body), // Ensure the body is a string
+        body: JSON.stringify(req.body),
       });
       response = await POST(nextReq);
     } else {

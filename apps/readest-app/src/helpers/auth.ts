@@ -1,61 +1,41 @@
-import { User } from '@supabase/supabase-js';
-import { supabase } from '@/utils/supabase';
+import { type AppwriteUser } from '@/context/AuthContext';
 
 interface UseAuthCallbackOptions {
-  accessToken?: string | null;
-  refreshToken?: string | null;
-  login: (accessToken: string, user: User) => void;
+  login: (accessToken: string, user: AppwriteUser) => void;
   navigate: (path: string) => void;
-  type?: string | null;
   next?: string;
   error?: string | null;
-  errorCode?: string | null;
   errorDescription?: string | null;
 }
 
 export function handleAuthCallback({
-  accessToken,
-  refreshToken,
   login,
   navigate,
-  type,
   next = '/',
   error,
+  errorDescription,
 }: UseAuthCallbackOptions) {
   async function finalizeSession() {
     if (error) {
+      console.error('Auth callback error:', error, errorDescription);
       navigate('/auth/error');
       return;
     }
 
-    if (!accessToken || !refreshToken) {
-      navigate('/library');
-      return;
-    }
+    try {
+      // Appwrite OAuth sessions are automatically established via cookies
+      // after the redirect — we just need to read the current session.
+      const { Account } = await import('appwrite');
+      const { appwriteClient } = await import('@/utils/appwrite');
+      const account = new Account(appwriteClient);
 
-    const { error: err } = await supabase.auth.setSession({
-      access_token: accessToken,
-      refresh_token: refreshToken,
-    });
+      const user = await account.get();
+      const jwtResponse = await account.createJWT();
 
-    if (err) {
-      console.error('Error setting session:', err);
-      navigate('/auth/error');
-      return;
-    }
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user) {
-      login(accessToken, user);
-      if (type === 'recovery') {
-        navigate('/auth/recovery');
-        return;
-      }
+      login(jwtResponse.jwt, user);
       navigate(next);
-    } else {
-      console.error('Error fetching user data');
+    } catch (err) {
+      console.error('Error finalizing Appwrite session:', err);
       navigate('/auth/error');
     }
   }
