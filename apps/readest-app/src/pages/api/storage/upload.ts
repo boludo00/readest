@@ -1,13 +1,15 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { createSupabaseAdminClient } from '@/utils/supabase';
 import { corsAllMethods, runMiddleware } from '@/utils/cors';
 import {
   getStoragePlanData,
   validateUserAndToken,
   STORAGE_QUOTA_GRACE_BYTES,
 } from '@/utils/access';
-import { getDownloadSignedUrl, getUploadSignedUrl } from '@/utils/object';
-import { READEST_PUBLIC_STORAGE_BASE_URL } from '@/services/constants';
+import {
+  createAppwriteAdminClient,
+  APPWRITE_DATABASE_ID,
+  COLLECTIONS,
+} from '@/utils/appwrite.server';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   await runMiddleware(req, res, corsAllMethods);
@@ -22,26 +24,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const { fileName, fileSize, bookHash, temp = false } = req.body;
+
   if (temp) {
-    try {
-      const datetime = new Date();
-      const timeStr = datetime.toISOString().replace(/[-:]/g, '').replace('T', '').slice(0, 10);
-      const userStr = user.id.slice(0, 8);
-      const fileKey = `temp/img/${timeStr}/${userStr}/${fileName}`;
-      const bucketName = process.env['TEMP_STORAGE_PUBLIC_BUCKET_NAME'] || '';
-      const uploadUrl = await getUploadSignedUrl(fileKey, fileSize, 1800, bucketName);
-      const downloadUrl = await getDownloadSignedUrl(fileKey, 3 * 86400, bucketName);
-      const pathname = new URL(downloadUrl).pathname;
-      const publicBaseUrl = READEST_PUBLIC_STORAGE_BASE_URL;
-      const publicDownloadUrl = `${publicBaseUrl}${pathname.replace(`/${bucketName}`, '')}`;
-      return res.status(200).json({
-        uploadUrl,
-        downloadUrl: publicDownloadUrl,
-      });
-    } catch (error) {
-      console.error('Error creating presigned post for temp file:', error);
-      return res.status(500).json({ error: 'Could not create presigned post' });
-    }
+    return res
+      .status(501)
+      .json({ error: 'Temp file upload not yet supported with Appwrite Storage' });
   }
 
   try {
@@ -49,59 +36,79 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: 'Missing file info' });
     }
 
-    const { usage, quota } = getStoragePlanData(token);
-    if (usage + fileSize > quota + STORAGE_QUOTA_GRACE_BYTES) {
-      return res.status(403).json({ error: 'Insufficient storage quota', usage });
+    const { databases } = createAppwriteAdminClient();
+
+    // Calculate current usage from the files collection
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Query, ID } = require('node-appwrite') as typeof import('node-appwrite');
+
+    const existingFiles = await databases.listDocuments(APPWRITE_DATABASE_ID, COLLECTIONS.FILES, [
+      Query.equal('user_id', user.$id),
+      Query.isNull('deleted_at'),
+    ]);
+
+    const currentUsage = existingFiles.documents.reduce(
+      (sum, doc) => sum + parseInt(doc.file_size || '0', 10),
+      0,
+    );
+
+    const { quota } = getStoragePlanData(token);
+    if (currentUsage + fileSize > quota + STORAGE_QUOTA_GRACE_BYTES) {
+      return res.status(403).json({ error: 'Insufficient storage quota', usage: currentUsage });
     }
 
-    const fileKey = `${user.id}/${fileName}`;
-    const supabase = createSupabaseAdminClient();
-    const { data: existingRecord, error: fetchError } = await supabase
-      .from('files')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('file_key', fileKey)
-      .limit(1)
-      .single();
+    const fileKey = `${user.$id}/${fileName}`;
 
-    if (fetchError && fetchError.code !== 'PGRST116') {
-      return res.status(500).json({ error: fetchError.message });
-    }
-    let objSize = fileSize;
-    if (existingRecord) {
-      objSize = existingRecord.file_size;
-    } else {
-      const { data: inserted, error: insertError } = await supabase
-        .from('files')
-        .insert([
-          {
-            user_id: user.id,
-            book_hash: bookHash,
-            file_key: fileKey,
-            file_size: fileSize,
-          },
-        ])
-        .select()
-        .single();
-      console.log('Inserted record:', inserted);
-      if (insertError) return res.status(500).json({ error: insertError.message });
-    }
+    // Check if file already exists for this user + fileKey
+    const existingRecord = await databases.listDocuments(APPWRITE_DATABASE_ID, COLLECTIONS.FILES, [
+      Query.equal('user_id', user.$id),
+      Query.equal('file_key', fileKey),
+      Query.isNull('deleted_at'),
+      Query.limit(1),
+    ]);
 
-    try {
-      const uploadUrl = await getUploadSignedUrl(fileKey, objSize, 1800);
+    let docId: string;
+    let storageFileId: string;
 
-      res.status(200).json({
-        uploadUrl,
-        fileKey,
-        usage: usage + fileSize,
-        quota,
+    if (existingRecord.documents.length > 0) {
+      const doc = existingRecord.documents[0]!;
+      docId = doc.$id;
+      storageFileId = doc.storage_file_id;
+      // Update file size
+      await databases.updateDocument(APPWRITE_DATABASE_ID, COLLECTIONS.FILES, docId, {
+        file_size: String(fileSize),
       });
-    } catch (error) {
-      console.error('Error creating presigned post:', error);
-      res.status(500).json({ error: 'Could not create presigned post' });
+    } else {
+      storageFileId = ID.unique();
+      const newDoc = await databases.createDocument(
+        APPWRITE_DATABASE_ID,
+        COLLECTIONS.FILES,
+        ID.unique(),
+        {
+          user_id: user.$id,
+          book_hash: bookHash || null,
+          file_key: fileKey,
+          file_size: String(fileSize),
+          storage_file_id: storageFileId,
+          created_at: new Date().toISOString(),
+        },
+      );
+      docId = newDoc.$id;
     }
+
+    // Build the upload URL pointing to our upload-data proxy endpoint
+    const protocol = req.headers['x-forwarded-proto'] || 'http';
+    const host = req.headers.host;
+    const uploadUrl = `${protocol}://${host}/api/storage/upload-data?docId=${docId}`;
+
+    return res.status(200).json({
+      uploadUrl,
+      fileKey,
+      usage: currentUsage + fileSize,
+      quota,
+    });
   } catch (error) {
-    console.error(error);
+    console.error('Upload error:', error);
     return res.status(500).json({ error: 'Something went wrong' });
   }
 }

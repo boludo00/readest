@@ -1,6 +1,6 @@
 import { getAPIBaseUrl, isWebAppPlatform } from '@/services/environment';
 import { AppService } from '@/types/system';
-import { getUserID } from '@/utils/access';
+import { getAccessToken, getUserID } from '@/utils/access';
 import { fetchWithAuth } from '@/utils/fetch';
 import {
   tauriUpload,
@@ -62,10 +62,19 @@ export const uploadFile = async (
 
     const { uploadUrl, downloadUrl }: { uploadUrl: string; downloadUrl?: string } =
       await response.json();
+
+    // The upload URL now points to our own proxy endpoint and requires auth headers
+    const token = await getAccessToken();
+    const authHeaders: Record<string, string> = {};
+    if (token) {
+      authHeaders['Authorization'] = `Bearer ${token}`;
+    }
+
     if (isWebAppPlatform()) {
-      await webUpload(file, uploadUrl, onProgress);
+      await webUpload(file, uploadUrl, onProgress, authHeaders);
     } else {
-      await tauriUpload(uploadUrl, fileFullPath, 'PUT', onProgress);
+      const headersMap = new Map(Object.entries(authHeaders));
+      await tauriUpload(uploadUrl, fileFullPath, 'PUT', onProgress, headersMap);
     }
     return temp ? downloadUrl : undefined;
   } catch (error) {
@@ -144,19 +153,26 @@ export const downloadFile = async ({
         },
       );
 
-      const { downloadUrl: url } = await response.json();
-      downloadUrl = url;
+      const { downloadUrl: resolvedUrl } = await response.json();
+      downloadUrl = resolvedUrl;
     }
 
     if (!downloadUrl) {
       throw new Error('No download URL available');
     }
 
+    // The download URL now points to our own proxy endpoint and requires auth headers
+    const token = await getAccessToken();
+    const authHeaders: Record<string, string> = { ...headers };
+    if (token) {
+      authHeaders['Authorization'] = `Bearer ${token}`;
+    }
+
     if (isWebAppPlatform()) {
       const { headers: responseHeaders, blob } = await webDownload(
         downloadUrl,
         onProgress,
-        headers,
+        authHeaders,
       );
       await appService.writeFile(dst, 'None', await blob.arrayBuffer());
       return responseHeaders;
@@ -165,7 +181,7 @@ export const downloadFile = async ({
         downloadUrl,
         dst,
         onProgress,
-        headers,
+        authHeaders,
         undefined,
         singleThreaded,
         skipSslVerification,

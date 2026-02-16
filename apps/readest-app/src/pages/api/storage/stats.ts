@@ -1,7 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { createSupabaseAdminClient } from '@/utils/supabase';
 import { corsAllMethods, runMiddleware } from '@/utils/cors';
 import { validateUserAndToken, getStoragePlanData } from '@/utils/access';
+import {
+  createAppwriteAdminClient,
+  APPWRITE_DATABASE_ID,
+  COLLECTIONS,
+} from '@/utils/appwrite.server';
 
 interface StorageStats {
   totalFiles: number;
@@ -29,73 +33,49 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(403).json({ error: 'Not authenticated' });
     }
 
-    const supabase = createSupabaseAdminClient();
+    const { databases } = createAppwriteAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Query } = require('node-appwrite') as typeof import('node-appwrite');
 
-    // Get total file count and size
-    const { data: totalStats, error: totalError } = await supabase
-      .from('files')
-      .select('file_size')
-      .eq('user_id', user.id)
-      .is('deleted_at', null);
+    // Get all non-deleted files for this user
+    const allFiles = await databases.listDocuments(APPWRITE_DATABASE_ID, COLLECTIONS.FILES, [
+      Query.equal('user_id', user.$id),
+      Query.isNull('deleted_at'),
+      Query.limit(5000),
+    ]);
 
-    if (totalError) {
-      console.error('Error querying total stats:', totalError);
-      return res.status(500).json({ error: 'Failed to retrieve storage statistics' });
-    }
-
-    const totalFiles = totalStats?.length || 0;
-    const totalSize = totalStats?.reduce((sum, file) => sum + (file.file_size || 0), 0) || 0;
-
-    // Get storage plan data
-    const { usage, quota } = getStoragePlanData(token);
-    const usagePercentage = quota > 0 ? Math.round((usage / quota) * 100) : 0;
-
-    // Get stats grouped by book_hash
-    const { data: bookHashStats, error: bookHashError } = await supabase.rpc(
-      'get_storage_by_book_hash',
-      { p_user_id: user.id },
+    const totalFiles = allFiles.documents.length;
+    const totalSize = allFiles.documents.reduce(
+      (sum, doc) => sum + parseInt(doc.file_size || '0', 10),
+      0,
     );
 
-    // Fallback if RPC function doesn't exist - manual aggregation
-    let byBookHash: Array<{ bookHash: string | null; fileCount: number; totalSize: number }> = [];
-
-    if (bookHashError) {
-      console.warn('RPC function not available, using fallback aggregation:', bookHashError);
-
-      const { data: allFiles, error: filesError } = await supabase
-        .from('files')
-        .select('book_hash, file_size')
-        .eq('user_id', user.id)
-        .is('deleted_at', null);
-
-      if (!filesError && allFiles) {
-        const grouped = new Map<string | null, { count: number; size: number }>();
-
-        allFiles.forEach((file) => {
-          const key = file.book_hash;
-          const current = grouped.get(key) || { count: 0, size: 0 };
-          grouped.set(key, {
-            count: current.count + 1,
-            size: current.size + file.file_size,
-          });
-        });
-
-        byBookHash = Array.from(grouped.entries())
-          .map(([bookHash, stats]) => ({
-            bookHash,
-            fileCount: stats.count,
-            totalSize: stats.size,
-          }))
-          .sort((a, b) => b.totalSize - a.totalSize);
-      }
-    } else if (bookHashStats) {
-      byBookHash = bookHashStats;
+    // Group by book_hash
+    const grouped = new Map<string | null, { count: number; size: number }>();
+    for (const doc of allFiles.documents) {
+      const key = doc.book_hash || null;
+      const current = grouped.get(key) || { count: 0, size: 0 };
+      grouped.set(key, {
+        count: current.count + 1,
+        size: current.size + parseInt(doc.file_size || '0', 10),
+      });
     }
+
+    const byBookHash = Array.from(grouped.entries())
+      .map(([bookHash, stats]) => ({
+        bookHash,
+        fileCount: stats.count,
+        totalSize: stats.size,
+      }))
+      .sort((a, b) => b.totalSize - a.totalSize);
+
+    const { usage: _planUsage, quota } = getStoragePlanData(token);
+    const usagePercentage = quota > 0 ? Math.round((totalSize / quota) * 100) : 0;
 
     const response: StorageStats = {
       totalFiles,
       totalSize,
-      usage,
+      usage: totalSize,
       quota,
       usagePercentage,
       byBookHash,

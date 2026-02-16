@@ -1,8 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { createSupabaseAdminClient } from '@/utils/supabase';
 import { corsAllMethods, runMiddleware } from '@/utils/cors';
-import { getDownloadSignedUrl } from '@/utils/object';
 import { validateUserAndToken } from '@/utils/access';
+import {
+  createAppwriteAdminClient,
+  APPWRITE_DATABASE_ID,
+  COLLECTIONS,
+} from '@/utils/appwrite.server';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   await runMiddleware(req, res, corsAllMethods);
@@ -17,11 +20,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(403).json({ error: 'Not authenticated' });
     }
 
+    const { databases } = createAppwriteAdminClient();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Query } = require('node-appwrite') as typeof import('node-appwrite');
+
     if (req.method === 'GET') {
-      let { fileKey } = req.query;
-      // Also parse fileKey directly from raw URL to handle special characters like & in filenames.
-      // because frameworks may incorrectly split parameters when the fileKey value contains
-      // encoded & (%26), treating it as a parameter separator.
+      let fileKey = req.query['fileKey'] as string | undefined;
+      // Parse fileKey directly from raw URL to handle special characters like & in filenames.
       if (req.url?.includes('fileKey=') && req.url?.includes('&')) {
         const fileKeyFromUrl = req.url
           .substring(req.url.indexOf('fileKey=') + 8)
@@ -34,9 +39,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ error: 'Missing or invalid fileKey' });
       }
 
-      const downloadUrlsMap = await processFileKeys([fileKey], user.id);
-      const downloadUrl = downloadUrlsMap[fileKey];
-
+      const downloadUrl = await getDownloadUrl(databases, user.$id, fileKey, req, Query);
       if (!downloadUrl) {
         return res.status(404).json({ error: 'File not found' });
       }
@@ -50,16 +53,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!fileKeys || !Array.isArray(fileKeys)) {
         return res.status(400).json({ error: 'Missing or invalid fileKeys array' });
       }
-
       if (fileKeys.length === 0) {
         return res.status(400).json({ error: 'fileKeys array cannot be empty' });
       }
-
       if (!fileKeys.every((key) => typeof key === 'string')) {
         return res.status(400).json({ error: 'All fileKeys must be strings' });
       }
 
-      const downloadUrls = await processFileKeys(fileKeys, user.id);
+      const downloadUrls: Record<string, string | undefined> = {};
+      const results = await Promise.allSettled(
+        fileKeys.map(async (fileKey: string) => {
+          const url = await getDownloadUrl(databases, user.$id, fileKey, req, Query);
+          return { fileKey, url };
+        }),
+      );
+
+      for (const result of results) {
+        if (result.status === 'fulfilled') {
+          downloadUrls[result.value.fileKey] = result.value.url ?? undefined;
+        }
+      }
 
       return res.status(200).json({ downloadUrls });
     }
@@ -69,100 +82,65 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 }
 
-async function processFileKeys(
-  fileKeys: string[],
+async function getDownloadUrl(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  databases: any,
   userId: string,
-): Promise<Record<string, string | undefined>> {
-  const supabase = createSupabaseAdminClient();
+  fileKey: string,
+  req: NextApiRequest,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  Query: any,
+): Promise<string | undefined> {
+  try {
+    const result = await databases.listDocuments(APPWRITE_DATABASE_ID, COLLECTIONS.FILES, [
+      Query.equal('user_id', userId),
+      Query.equal('file_key', fileKey),
+      Query.isNull('deleted_at'),
+      Query.limit(1),
+    ]);
 
-  const { data: fileRecords, error: fileError } = await supabase
-    .from('files')
-    .select('user_id, file_key, book_hash')
-    .eq('user_id', userId)
-    .in('file_key', fileKeys)
-    .is('deleted_at', null);
+    if (result.documents.length === 0) {
+      // Fallback: try matching by book_hash for legacy file key formats
+      if (fileKey.includes('Readest/Book')) {
+        const parts = fileKey.split('/');
+        if (parts.length >= 4) {
+          const bookHash = parts[parts.length - 2];
+          const fileName = parts[parts.length - 1];
+          const fileExtension = fileName?.split('.').pop() || '';
 
-  if (fileError) {
-    console.error('Error querying files:', fileError);
-    return Object.fromEntries(fileKeys.map((key) => [key, undefined]));
-  }
-
-  const fileRecordMap = new Map((fileRecords || []).map((record) => [record.file_key, record]));
-
-  const missingFileKeys = fileKeys.filter((key) => !fileRecordMap.has(key));
-
-  if (missingFileKeys.length > 0) {
-    const fallbackCandidates = missingFileKeys
-      .filter((key) => key.includes('Readest/Book'))
-      .map((key) => {
-        const parts = key.split('/');
-        if (parts.length === 5) {
-          const bookHash = parts[3]!;
-          const filename = parts[4]!;
-          const fileExtension = filename.split('.').pop() || '';
-          return { originalKey: key, bookHash, fileExtension };
-        }
-        return null;
-      })
-      .filter(Boolean) as Array<{ originalKey: string; bookHash: string; fileExtension: string }>;
-
-    if (fallbackCandidates.length > 0) {
-      const bookHashes = [...new Set(fallbackCandidates.map((c) => c.bookHash))];
-
-      const { data: fallbackRecords, error: fallbackError } = await supabase
-        .from('files')
-        .select('user_id, file_key, book_hash')
-        .eq('user_id', userId)
-        .in('book_hash', bookHashes)
-        .is('deleted_at', null);
-
-      if (!fallbackError && fallbackRecords) {
-        for (const candidate of fallbackCandidates) {
-          const matchedFile = fallbackRecords.find(
-            (f) =>
-              f.book_hash === candidate.bookHash &&
-              f.file_key.endsWith(`.${candidate.fileExtension}`),
+          const fallbackResult = await databases.listDocuments(
+            APPWRITE_DATABASE_ID,
+            COLLECTIONS.FILES,
+            [
+              Query.equal('user_id', userId),
+              Query.equal('book_hash', bookHash),
+              Query.isNull('deleted_at'),
+            ],
           );
-          if (matchedFile) {
-            fileRecordMap.set(candidate.originalKey, matchedFile);
+
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const match = fallbackResult.documents.find((doc: any) =>
+            doc.file_key.endsWith(`.${fileExtension}`),
+          );
+
+          if (match) {
+            const protocol = req.headers['x-forwarded-proto'] || 'http';
+            const host = req.headers.host;
+            return `${protocol}://${host}/api/storage/download-data?docId=${match.$id}`;
           }
         }
       }
+      return undefined;
     }
+
+    const doc = result.documents[0];
+    if (doc.user_id !== userId) return undefined;
+
+    const protocol = req.headers['x-forwarded-proto'] || 'http';
+    const host = req.headers.host;
+    return `${protocol}://${host}/api/storage/download-data?docId=${doc.$id}`;
+  } catch (error) {
+    console.error(`Error resolving download URL for ${fileKey}:`, error);
+    return undefined;
   }
-
-  const results = await Promise.allSettled(
-    fileKeys.map(async (fileKey) => {
-      const fileRecord = fileRecordMap.get(fileKey);
-
-      if (!fileRecord) {
-        return { fileKey, downloadUrl: undefined };
-      }
-
-      if (fileRecord.user_id !== userId) {
-        return { fileKey, downloadUrl: undefined };
-      }
-
-      try {
-        const downloadUrl = await getDownloadSignedUrl(fileRecord.file_key, 1800);
-        return { fileKey, downloadUrl };
-      } catch (error) {
-        console.error(`Error creating signed URL for ${fileKey}:`, error);
-        return { fileKey, downloadUrl: undefined };
-      }
-    }),
-  );
-
-  const downloadUrls: Record<string, string | undefined> = {};
-
-  results.forEach((result, index) => {
-    const fileKey = fileKeys[index]!;
-    if (result.status === 'fulfilled') {
-      downloadUrls[fileKey] = result.value.downloadUrl;
-    } else {
-      downloadUrls[fileKey] = undefined;
-    }
-  });
-
-  return downloadUrls;
 }
