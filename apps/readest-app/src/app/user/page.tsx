@@ -52,7 +52,7 @@ const ProfilePage = () => {
   const _ = useTranslation();
   const router = useRouter();
   const { appService } = useEnv();
-  const { token, user, refresh } = useAuth();
+  const { token, user, isAuthReady, refresh } = useAuth();
   const { safeAreaInsets, isRoundedWindow } = useThemeStore();
 
   const [loading, setLoading] = useState(false);
@@ -68,7 +68,7 @@ const ProfilePage = () => {
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
-    if (!mounted) return;
+    if (!mounted || !isAuthReady) return;
 
     const isAuthenticated = user && token && appService;
     if (isAuthenticated) return;
@@ -78,7 +78,7 @@ const ProfilePage = () => {
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [mounted, user, token, appService, router]);
+  }, [mounted, isAuthReady, user, token, appService, router]);
 
   useTheme({ systemUIVisible: false });
 

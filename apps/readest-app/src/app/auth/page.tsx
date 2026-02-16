@@ -2,15 +2,14 @@
 import clsx from 'clsx';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { ID, OAuthProvider as AppwriteOAuthProvider } from 'appwrite';
 
-import { Auth } from '@supabase/auth-ui-react';
-import { ThemeSupa } from '@supabase/auth-ui-shared';
 import { FcGoogle } from 'react-icons/fc';
 import { FaApple, FaGithub, FaDiscord } from 'react-icons/fa';
 import { IoArrowBack } from 'react-icons/io5';
 
 import { useAuth } from '@/context/AuthContext';
-import { supabase } from '@/utils/supabase';
+import { appwriteAccount } from '@/utils/appwrite';
 import { useEnv } from '@/context/EnvContext';
 import { useTheme } from '@/hooks/useTheme';
 import { useThemeStore } from '@/store/themeStore';
@@ -23,12 +22,18 @@ import { start, cancel, onUrl, onInvalidUrl } from '@fabianlars/tauri-plugin-oau
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 import { handleAuthCallback } from '@/helpers/auth';
-import { getUserProfilePlan } from '@/utils/access';
 import { getAppleIdAuth, Scope } from './utils/appleIdAuth';
 import { authWithCustomTab, authWithSafari } from './utils/nativeAuth';
 import WindowButtons from '@/components/WindowButtons';
 
-type OAuthProvider = 'google' | 'apple' | 'azure' | 'github' | 'discord';
+type OAuthProvider = 'google' | 'apple' | 'github' | 'discord';
+
+const APPWRITE_OAUTH_PROVIDERS: Record<OAuthProvider, AppwriteOAuthProvider> = {
+  google: AppwriteOAuthProvider.Google,
+  apple: AppwriteOAuthProvider.Apple,
+  github: AppwriteOAuthProvider.Github,
+  discord: AppwriteOAuthProvider.Discord,
+};
 
 interface SingleInstancePayload {
   args: string[];
@@ -61,29 +66,35 @@ const ProviderLogin: React.FC<ProviderLoginProp> = ({ provider, handleSignIn, Ic
   );
 };
 
+type AuthView = 'sign_in' | 'sign_up' | 'magic_link' | 'forgotten_password';
+
 export default function AuthPage() {
   const _ = useTranslation();
   const router = useRouter();
   const { login } = useAuth();
   const { envConfig, appService } = useEnv();
-  const { isDarkMode, safeAreaInsets, isRoundedWindow } = useThemeStore();
+  const { safeAreaInsets, isRoundedWindow } = useThemeStore();
   const { isTrafficLightVisible } = useTrafficLightStore();
   const { settings, setSettings, saveSettings } = useSettingsStore();
   const [port, setPort] = useState<number | null>(null);
   const [isMounted, setIsMounted] = useState(false);
   const isOAuthServerRunning = useRef(false);
-  const useCustomeOAuth = useRef(false);
+  const useCustomOAuth = useRef(false);
+
+  const [authView, setAuthView] = useState<AuthView>('sign_in');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
 
   const headerRef = useRef<HTMLDivElement>(null);
 
   useTheme({ systemUIVisible: false });
 
   const getTauriRedirectTo = (isOAuth: boolean) => {
-    // For custom OAuth mode, use a local server to handle the OAuth callback
-    // This is useful for development or some sandboxed environments like Flatpak
-    // where custom URL schemes are not supported
     if (
-      !useCustomeOAuth.current &&
+      !useCustomOAuth.current &&
       (process.env.NODE_ENV === 'production' || appService?.isMobileApp || USE_APPLE_SIGN_IN)
     ) {
       if (appService?.isMobileApp) {
@@ -91,9 +102,6 @@ export default function AuthPage() {
       }
       return DEEPLINK_CALLBACK;
     }
-    // For development env on Desktop, use a custom OAuth callback server
-    // it's possible to register a custom URL scheme for the app
-    // but this is not supported by macOS, so we use a local server instead
     return `http://localhost:${port}`;
   };
 
@@ -104,23 +112,20 @@ export default function AuthPage() {
   };
 
   const tauriSignInApple = async () => {
-    if (!supabase) {
-      throw new Error('No backend connected');
-    }
-    supabase.auth.signOut();
     const request = {
       scope: ['fullName', 'email'] as Scope[],
     };
     if (appService?.isIOSApp || USE_APPLE_SIGN_IN) {
-      const appleAuthResponse = await getAppleIdAuth(request);
-      if (appleAuthResponse.identityToken) {
-        const { error } = await supabase.auth.signInWithIdToken({
-          provider: 'apple',
-          token: appleAuthResponse.identityToken,
-        });
-        if (error) {
-          console.error('Authentication error:', error);
+      try {
+        const appleAuthResponse = await getAppleIdAuth(request);
+        if (appleAuthResponse.identityToken) {
+          // TODO: Appwrite v1.6+ supports creating sessions from provider tokens
+          // For now, fall back to standard OAuth flow
+          console.log('Apple native sign-in token received, using OAuth flow');
+          await tauriSignIn('apple');
         }
+      } catch (err) {
+        console.error('Apple authentication error:', err);
       }
     } else {
       console.log('Sign in with Apple on this platform is not supported yet');
@@ -128,62 +133,114 @@ export default function AuthPage() {
   };
 
   const tauriSignIn = async (provider: OAuthProvider) => {
-    if (!supabase) {
-      throw new Error('No backend connected');
-    }
-    supabase.auth.signOut();
-    const { data, error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: {
-        skipBrowserRedirect: true,
-        redirectTo: getTauriRedirectTo(true),
-      },
-    });
+    const redirectTo = getTauriRedirectTo(true);
 
-    if (error) {
-      console.error('Authentication error:', error);
-      return;
-    }
-    // Open the OAuth URL in a ASWebAuthenticationSession on iOS to comply with Apple's guidelines
-    // for other platforms, open the OAuth URL in the default browser
+    // Construct the Appwrite OAuth URL
+    const oauthUrl = `${process.env['NEXT_PUBLIC_APPWRITE_ENDPOINT']}/account/sessions/oauth2/${provider}?project=${process.env['NEXT_PUBLIC_APPWRITE_PROJECT_ID']}&success=${encodeURIComponent(redirectTo)}&failure=${encodeURIComponent(redirectTo)}`;
+
     if (appService?.isIOSApp || appService?.isMacOSApp) {
-      const res = await authWithSafari({ authUrl: data.url });
+      const res = await authWithSafari({ authUrl: oauthUrl });
       if (res) {
         handleOAuthUrl(res.redirectUrl);
       }
     } else if (appService?.isAndroidApp) {
-      const res = await authWithCustomTab({ authUrl: data.url });
+      const res = await authWithCustomTab({ authUrl: oauthUrl });
       if (res) {
         handleOAuthUrl(res.redirectUrl);
       }
     } else {
-      await openUrl(data.url);
+      await openUrl(oauthUrl);
     }
   };
 
   const handleOAuthUrl = async (url: string) => {
     console.log('Handle OAuth URL:', url);
-    const hashMatch = url.match(/#(.*)/);
-    if (hashMatch) {
-      const hash = hashMatch[1];
-      const params = new URLSearchParams(hash);
-      const accessToken = params.get('access_token');
-      const refreshToken = params.get('refresh_token');
-      const type = params.get('type');
-      if (accessToken) {
-        let next = params.get('next') ?? '/';
-        if (getUserProfilePlan(accessToken) === 'free') {
-          next = '/user';
-        }
-        handleAuthCallback({ accessToken, refreshToken, type, next, login, navigate: router.push });
+    // Appwrite OAuth redirects include query params (not hash fragments)
+    try {
+      const parsedUrl = new URL(url);
+      const error = parsedUrl.searchParams.get('error');
+      if (error) {
+        console.error('OAuth error:', error);
+        return;
       }
+      // After successful OAuth, Appwrite sets session cookies.
+      // Finalize by reading the session.
+      handleAuthCallback({
+        login,
+        navigate: router.push,
+        next: '/library',
+      });
+    } catch (err) {
+      console.error('Error handling OAuth URL:', err);
     }
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setMessage('');
+    setErrorMsg('');
+
+    try {
+      if (authView === 'sign_up') {
+        await appwriteAccount.create(ID.unique(), email, password);
+        await appwriteAccount.createEmailPasswordSession(email, password);
+      } else if (authView === 'sign_in') {
+        await appwriteAccount.createEmailPasswordSession(email, password);
+      } else if (authView === 'magic_link') {
+        const redirectTo = isTauriAppPlatform() ? getTauriRedirectTo(false) : getWebRedirectTo();
+        await appwriteAccount.createMagicURLToken(ID.unique(), email, redirectTo);
+        setMessage(_('Check your email for the magic link'));
+        setLoading(false);
+        return;
+      } else if (authView === 'forgotten_password') {
+        const redirectTo = isTauriAppPlatform()
+          ? getTauriRedirectTo(false)
+          : getWebRedirectTo().replace('/callback', '/recovery');
+        await appwriteAccount.createRecovery(email, redirectTo);
+        setMessage(_('Check your email for the password reset link'));
+        setLoading(false);
+        return;
+      }
+
+      // Session created — finalize
+      const user = await appwriteAccount.get();
+      const jwtResponse = await appwriteAccount.createJWT();
+      login(jwtResponse.jwt, user);
+
+      const redirectTo = new URLSearchParams(window.location.search).get('redirect');
+      router.push(redirectTo ?? '/library');
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : '';
+      // If Appwrite says a session is already active, just finalize it
+      if (errMsg.toLowerCase().includes('session is active')) {
+        try {
+          const existingUser = await appwriteAccount.get();
+          const jwtResponse = await appwriteAccount.createJWT();
+          login(jwtResponse.jwt, existingUser);
+          const redirectTo = new URLSearchParams(window.location.search).get('redirect');
+          router.push(redirectTo ?? '/library');
+          return;
+        } catch {
+          // Fall through to show generic error
+        }
+      }
+      setErrorMsg(errMsg || _('Authentication failed'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const webSignIn = async (provider: OAuthProvider) => {
+    const redirectTo = getWebRedirectTo();
+    const appwriteProvider = APPWRITE_OAUTH_PROVIDERS[provider];
+    appwriteAccount.createOAuth2Session(appwriteProvider, redirectTo, redirectTo);
   };
 
   const startTauriOAuth = async () => {
     try {
       if (
-        !useCustomeOAuth.current &&
+        !useCustomOAuth.current &&
         (process.env.NODE_ENV === 'production' || appService?.isMobileApp || USE_APPLE_SIGN_IN)
       ) {
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
@@ -227,7 +284,6 @@ export default function AuthPage() {
   };
 
   const handleGoBack = () => {
-    // Keep login false to avoid infinite loop to redirect to the login page
     settings.keepLogin = false;
     setSettings(settings);
     saveSettings(envConfig, settings);
@@ -239,61 +295,6 @@ export default function AuthPage() {
     }
   };
 
-  const getAuthLocalization = () => {
-    return {
-      variables: {
-        sign_in: {
-          email_label: _('Email address'),
-          password_label: _('Your Password'),
-          email_input_placeholder: _('Your email address'),
-          password_input_placeholder: _('Your password'),
-          button_label: _('Sign in'),
-          loading_button_label: _('Signing in...'),
-          social_provider_text: _('Sign in with {{provider}}'),
-          link_text: _('Already have an account? Sign in'),
-        },
-        sign_up: {
-          email_label: _('Email address'),
-          password_label: _('Create a Password'),
-          email_input_placeholder: _('Your email address'),
-          password_input_placeholder: _('Your password'),
-          button_label: _('Sign up'),
-          loading_button_label: _('Signing up...'),
-          social_provider_text: _('Sign in with {{provider}}'),
-          link_text: _("Don't have an account? Sign up"),
-          confirmation_text: _('Check your email for the confirmation link'),
-        },
-        magic_link: {
-          email_input_label: _('Email address'),
-          email_input_placeholder: _('Your email address'),
-          button_label: _('Sign in'),
-          loading_button_label: _('Signing in ...'),
-          link_text: _('Send a magic link email'),
-          confirmation_text: _('Check your email for the magic link'),
-        },
-        forgotten_password: {
-          email_label: _('Email address'),
-          password_label: _('Your Password'),
-          email_input_placeholder: _('Your email address'),
-          button_label: _('Send reset password instructions'),
-          loading_button_label: _('Sending reset instructions ...'),
-          link_text: _('Forgot your password?'),
-          confirmation_text: _('Check your email for the password reset link'),
-        },
-        verify_otp: {
-          email_input_label: _('Email address'),
-          email_input_placeholder: _('Your email address'),
-          phone_input_label: _('Phone number'),
-          phone_input_placeholder: _('Your phone number'),
-          token_input_label: _('Token'),
-          token_input_placeholder: _('Your OTP token'),
-          button_label: _('Verify token'),
-          loading_button_label: _('Signing in ...'),
-        },
-      },
-    };
-  };
-
   useEffect(() => {
     if (!isTauriAppPlatform()) return;
     if (isOAuthServerRunning.current) return;
@@ -301,7 +302,7 @@ export default function AuthPage() {
 
     invoke('get_environment_variable', { name: 'USE_CUSTOM_OAUTH' }).then((value) => {
       if (value === 'true') {
-        useCustomeOAuth.current = true;
+        useCustomOAuth.current = true;
       }
     });
 
@@ -313,26 +314,26 @@ export default function AuthPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Detect an already-active Appwrite session and auto-finalize instead of
+  // showing the login form (prevents "session already active" errors).
+  const sessionChecked = useRef(false);
   useEffect(() => {
-    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.access_token && session.user) {
-        login(session.access_token, session.user);
-        const redirectTo = new URLSearchParams(window.location.search).get('redirect');
-        const lastRedirectAtKey = 'lastRedirectAt';
-        const lastRedirectAt = parseInt(localStorage.getItem(lastRedirectAtKey) || '0', 10);
-        const now = Date.now();
-        localStorage.setItem(lastRedirectAtKey, now.toString());
-        if (now - lastRedirectAt > 3000) {
-          router.push(redirectTo ?? '/library');
-        }
-      }
-    });
+    if (sessionChecked.current) return;
+    sessionChecked.current = true;
 
-    return () => {
-      subscription?.subscription.unsubscribe();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router]);
+    (async () => {
+      try {
+        const currentUser = await appwriteAccount.get();
+        const jwtResponse = await appwriteAccount.createJWT();
+        login(jwtResponse.jwt, currentUser);
+
+        const redirectTo = new URLSearchParams(window.location.search).get('redirect');
+        router.push(redirectTo ?? '/library');
+      } catch {
+        // No active session — show the login form as usual
+      }
+    })();
+  }, [login, router]);
 
   useEffect(() => {
     setIsMounted(true);
@@ -342,9 +343,118 @@ export default function AuthPage() {
     return null;
   }
 
-  // For tauri app development, use a custom OAuth server to handle the OAuth callback
-  // For tauri app production, use deeplink to handle the OAuth callback
-  // For web app, use the built-in OAuth callback page /auth/callback
+  const emailForm = (
+    <form onSubmit={handleEmailAuth} className='w-full space-y-4'>
+      <div className='space-y-1'>
+        <label htmlFor='email' className='text-base-content/60 block text-sm'>
+          {_('Email address')}
+        </label>
+        <input
+          id='email'
+          type='email'
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder={_('Your email address')}
+          required
+          disabled={loading}
+          className='border-base-300 bg-base-100 text-base-content w-full rounded-md border px-4 py-2.5 focus:outline-none focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50'
+        />
+      </div>
+
+      {(authView === 'sign_in' || authView === 'sign_up') && (
+        <div className='space-y-1'>
+          <label htmlFor='password' className='text-base-content/60 block text-sm'>
+            {authView === 'sign_up' ? _('Create a Password') : _('Your Password')}
+          </label>
+          <input
+            id='password'
+            type='password'
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder={_('Your password')}
+            required
+            disabled={loading}
+            className='border-base-300 bg-base-100 text-base-content w-full rounded-md border px-4 py-2.5 focus:outline-none focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50'
+          />
+        </div>
+      )}
+
+      {errorMsg && <div className='text-sm text-red-500'>{errorMsg}</div>}
+      {message && <div className='text-base-content text-sm'>{message}</div>}
+
+      <button
+        type='submit'
+        disabled={loading}
+        className='w-full rounded-md bg-green-400 px-4 py-2.5 font-medium text-white transition-colors hover:bg-green-500 disabled:cursor-not-allowed'
+      >
+        {loading
+          ? authView === 'sign_up'
+            ? _('Signing up...')
+            : _('Signing in...')
+          : authView === 'sign_up'
+            ? _('Sign up')
+            : authView === 'magic_link'
+              ? _('Send a magic link email')
+              : authView === 'forgotten_password'
+                ? _('Send reset password instructions')
+                : _('Sign in')}
+      </button>
+
+      <div className='flex flex-col items-center gap-1 text-sm'>
+        {authView === 'sign_in' && (
+          <>
+            <button
+              type='button'
+              onClick={() => {
+                setAuthView('sign_up');
+                setErrorMsg('');
+                setMessage('');
+              }}
+              className='text-base-content/60 hover:underline'
+            >
+              {_("Don't have an account? Sign up")}
+            </button>
+            <button
+              type='button'
+              onClick={() => {
+                setAuthView('magic_link');
+                setErrorMsg('');
+                setMessage('');
+              }}
+              className='text-base-content/60 hover:underline'
+            >
+              {_('Send a magic link email')}
+            </button>
+            <button
+              type='button'
+              onClick={() => {
+                setAuthView('forgotten_password');
+                setErrorMsg('');
+                setMessage('');
+              }}
+              className='text-base-content/60 hover:underline'
+            >
+              {_('Forgot your password?')}
+            </button>
+          </>
+        )}
+        {authView !== 'sign_in' && (
+          <button
+            type='button'
+            onClick={() => {
+              setAuthView('sign_in');
+              setErrorMsg('');
+              setMessage('');
+            }}
+            className='text-base-content/60 hover:underline'
+          >
+            {_('Already have an account? Sign in')}
+          </button>
+        )}
+      </div>
+    </form>
+  );
+
   return isTauriAppPlatform() ? (
     <div
       className={clsx(
@@ -417,17 +527,7 @@ export default function AuthPage() {
             label={_('Sign in with {{provider}}', { provider: 'Discord' })}
           />
           <hr aria-hidden='true' className='border-base-300 my-3 mt-6 w-64 border-t' />
-          <div className='w-full'>
-            <Auth
-              supabaseClient={supabase}
-              appearance={{ theme: ThemeSupa }}
-              theme={isDarkMode ? 'dark' : 'light'}
-              magicLink={true}
-              providers={[]}
-              redirectTo={getTauriRedirectTo(false)}
-              localization={getAuthLocalization()}
-            />
-          </div>
+          <div className='w-full px-4'>{emailForm}</div>
         </div>
       </div>
     </div>
@@ -439,15 +539,37 @@ export default function AuthPage() {
       >
         <IoArrowBack className='text-base-content' />
       </button>
-      <Auth
-        supabaseClient={supabase}
-        appearance={{ theme: ThemeSupa }}
-        theme={isDarkMode ? 'dark' : 'light'}
-        magicLink={true}
-        providers={['google', 'apple', 'github', 'discord']}
-        redirectTo={getWebRedirectTo()}
-        localization={getAuthLocalization()}
-      />
+
+      <div className='mb-6 flex flex-col gap-2'>
+        <ProviderLogin
+          provider='google'
+          handleSignIn={webSignIn}
+          Icon={FcGoogle}
+          label={_('Sign in with {{provider}}', { provider: 'Google' })}
+        />
+        <ProviderLogin
+          provider='apple'
+          handleSignIn={webSignIn}
+          Icon={FaApple}
+          label={_('Sign in with {{provider}}', { provider: 'Apple' })}
+        />
+        <ProviderLogin
+          provider='github'
+          handleSignIn={webSignIn}
+          Icon={FaGithub}
+          label={_('Sign in with {{provider}}', { provider: 'GitHub' })}
+        />
+        <ProviderLogin
+          provider='discord'
+          handleSignIn={webSignIn}
+          Icon={FaDiscord}
+          label={_('Sign in with {{provider}}', { provider: 'Discord' })}
+        />
+      </div>
+
+      <hr aria-hidden='true' className='border-base-300 my-4 border-t' />
+
+      {emailForm}
     </div>
   );
 }

@@ -84,7 +84,7 @@ const LibraryPageWithSearchParams = () => {
 const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchParams | null }) => {
   const router = useRouter();
   const { envConfig, appService } = useEnv();
-  const { token, user } = useAuth();
+  const { token, user, isAuthReady } = useAuth();
   const {
     library: libraryBooks,
     isSyncing,
@@ -323,9 +323,13 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     }
   }, [pendingNavigationBookIds, appService, router]);
 
+  // Wait for auth initialization before deciding whether to redirect to /auth.
+  // Without this gate the library page can redirect before AuthContext finishes
+  // syncing the Appwrite session (race condition on iOS / Tauri).
+  const loginChecked = useRef(false);
   useEffect(() => {
-    if (isInitiating.current) return;
-    isInitiating.current = true;
+    if (!isAuthReady || loginChecked.current) return;
+    loginChecked.current = true;
 
     const initLogin = async () => {
       const appService = await envConfig.getAppService();
@@ -340,6 +344,14 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
         router.push('/auth');
       }
     };
+
+    initLogin();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthReady]);
+
+  useEffect(() => {
+    if (isInitiating.current) return;
+    isInitiating.current = true;
 
     const loadingTimeout = setTimeout(() => setLoading(true), 300);
     const initLibrary = async () => {
@@ -374,7 +386,6 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
       return false;
     };
 
-    initLogin();
     initLibrary();
     return () => {
       setCheckOpenWithBooks(false);
