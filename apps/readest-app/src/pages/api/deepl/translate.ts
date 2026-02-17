@@ -133,7 +133,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
         }
 
         if (!user || !token) return res.status(401).json({ error: ErrorCodes.UNAUTHORIZED });
-        await checkDailyUsage(user?.id, token, singleText.length);
+        await checkDailyUsage(user?.$id, token, singleText.length);
 
         return await callDeepLAPI(
           singleText,
@@ -149,7 +149,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
     const originalCharsCount = text.reduce((a, b) => a + b.length, 0);
     const translatedCharsCount = translations.reduce((a, b) => a + (b?.text.length || 0), 0);
     const newDailyUsage = await updateDailyUsage(
-      user?.id,
+      user?.$id,
       token,
       originalCharsCount + translatedCharsCount,
     );

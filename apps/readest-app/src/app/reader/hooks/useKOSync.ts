@@ -38,6 +38,7 @@ export const useKOSync = (bookKey: string) => {
   const [conflictDetails, setConflictDetails] = useState<SyncDetails | null>(null);
   const [errorMessage] = useState<string | null>(null);
   const hasPulledOnce = useRef(false);
+  const manualPushRef = useRef(false);
 
   const progress = getProgress(bookKey);
 
@@ -191,18 +192,41 @@ export const useKOSync = (bookKey: string) => {
         const { settings } = useSettingsStore.getState();
         if (['receive', 'disable'].includes(settings.kosync.strategy)) return;
 
+        const isManual = manualPushRef.current;
+        manualPushRef.current = false;
+
         const currentBook = getBookData(bookKey)?.book;
         const progress = generateKOProgress();
         if (!currentBook || !progress || !progress.koProgress) return;
 
-        await kosyncClient.updateProgress(currentBook, progress.koProgress, progress.percentage);
+        const result = await kosyncClient.updateProgress(
+          currentBook,
+          progress.koProgress,
+          progress.percentage,
+        );
+
+        if (isManual) {
+          if (result === 'ok') {
+            eventDispatcher.dispatch('toast', { message: _('Progress Pushed'), type: 'success' });
+          } else if (result === 'not_found') {
+            eventDispatcher.dispatch('toast', {
+              message: _('Book Not Found on Sync Server'),
+              type: 'warning',
+            });
+          } else {
+            eventDispatcher.dispatch('toast', {
+              message: _('Failed to Push Progress'),
+              type: 'error',
+            });
+          }
+        }
       }, 5000),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [bookKey, appService, kosyncClient],
   );
 
   const pullProgress = useCallback(
-    async () => {
+    async (isManual = false) => {
       if (!progress?.location || !appService || !kosyncClient) return;
 
       const bookData = getBookData(bookKey);
@@ -223,6 +247,12 @@ export const useKOSync = (bookKey: string) => {
       const remoteProgress = await kosyncClient.getProgress(book);
       if (!remoteProgress || !remoteProgress.progress) {
         setSyncState('synced');
+        if (isManual) {
+          eventDispatcher.dispatch('toast', {
+            message: _('No Remote Progress Found'),
+            type: 'info',
+          });
+        }
         return;
       }
 
@@ -239,6 +269,12 @@ export const useKOSync = (bookKey: string) => {
         setSyncState('conflict');
       } else {
         setSyncState('synced');
+        if (isManual) {
+          eventDispatcher.dispatch('toast', {
+            message: _('Your Progress Is Up to Date'),
+            type: 'info',
+          });
+        }
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -248,6 +284,12 @@ export const useKOSync = (bookKey: string) => {
   useEffect(() => {
     const handlePushProgress = (event: CustomEvent) => {
       if (event.detail.bookKey !== bookKey) return;
+      manualPushRef.current = true;
+      eventDispatcher.dispatch('toast', {
+        message: _('Pushing Progress...'),
+        type: 'info',
+        timeout: 3000,
+      });
       pushProgress();
       pushProgress.flush();
     };
@@ -262,18 +304,23 @@ export const useKOSync = (bookKey: string) => {
       eventDispatcher.off('flush-kosync', handleFlush);
       pushProgress.flush();
     };
-  }, [bookKey, pushProgress]);
+  }, [bookKey, pushProgress, _]);
 
   useEffect(() => {
     const handlePullProgress = (event: CustomEvent) => {
       if (event.detail.bookKey !== bookKey) return;
-      pullProgress();
+      eventDispatcher.dispatch('toast', {
+        message: _('Pulling Progress...'),
+        type: 'info',
+        timeout: 3000,
+      });
+      pullProgress(true);
     };
     eventDispatcher.on('pull-kosync', handlePullProgress);
     return () => {
       eventDispatcher.off('pull-kosync', handlePullProgress);
     };
-  }, [bookKey, pullProgress]);
+  }, [bookKey, pullProgress, _]);
 
   // Pull: pull progress once when the book is opened
   useEffect(() => {

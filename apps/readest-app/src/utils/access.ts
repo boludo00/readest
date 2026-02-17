@@ -1,26 +1,27 @@
 import { appwriteAccount } from '@/utils/appwrite';
 import { createAppwriteSessionClient } from '@/utils/appwrite.server';
+import { type AppwriteUser } from '@/context/AuthContext';
 import { UserPlan } from '@/types/quota';
 import { DEFAULT_DAILY_TRANSLATION_QUOTA, DEFAULT_STORAGE_QUOTA } from '@/services/constants';
 import { isWebAppPlatform } from '@/services/environment';
 import { getDailyUsage } from '@/services/translators/utils';
 
 export const getSubscriptionPlan = (_token: string): UserPlan => {
-  // Payments are out of scope for Appwrite migration — always return 'free'
-  return 'free';
+  // Self-hosted instance — return 'pro' for full access
+  return 'pro';
 };
 
 export const getUserProfilePlan = (_token: string): UserPlan => {
-  return 'free';
+  return 'pro';
 };
 
 export const STORAGE_QUOTA_GRACE_BYTES = 10 * 1024 * 1024; // 10 MB grace
 
 export const getStoragePlanData = (_token: string) => {
-  const plan: UserPlan = 'free';
+  const plan: UserPlan = 'pro';
   const usage = 0;
   const fixedQuota = parseInt(process.env['NEXT_PUBLIC_STORAGE_FIXED_QUOTA'] || '0');
-  const planQuota = fixedQuota || DEFAULT_STORAGE_QUOTA[plan] || DEFAULT_STORAGE_QUOTA['free'];
+  const planQuota = fixedQuota || DEFAULT_STORAGE_QUOTA[plan] || DEFAULT_STORAGE_QUOTA['pro'];
   const quota = planQuota;
 
   return {
@@ -31,7 +32,7 @@ export const getStoragePlanData = (_token: string) => {
 };
 
 export const getTranslationPlanData = (_token: string) => {
-  const plan: UserPlan = 'free';
+  const plan: UserPlan = 'pro';
   const usage = getDailyUsage() || 0;
   const quota = DEFAULT_DAILY_TRANSLATION_QUOTA[plan];
 
@@ -43,10 +44,10 @@ export const getTranslationPlanData = (_token: string) => {
 };
 
 export const getDailyTranslationPlanData = (_token: string) => {
-  const plan: UserPlan = 'free';
+  const plan: UserPlan = 'pro';
   const fixedQuota = parseInt(process.env['NEXT_PUBLIC_TRANSLATION_FIXED_QUOTA'] || '0');
   const quota =
-    fixedQuota || DEFAULT_DAILY_TRANSLATION_QUOTA[plan] || DEFAULT_DAILY_TRANSLATION_QUOTA['free'];
+    fixedQuota || DEFAULT_DAILY_TRANSLATION_QUOTA[plan] || DEFAULT_DAILY_TRANSLATION_QUOTA['pro'];
 
   return {
     plan,
@@ -95,7 +96,9 @@ export const getUserID = async (): Promise<string | null> => {
   }
 };
 
-export const validateUserAndToken = async (authHeader: string | null | undefined) => {
+export const validateUserAndToken = async (
+  authHeader: string | null | undefined,
+): Promise<{ user?: AppwriteUser; token?: string }> => {
   if (!authHeader) return {};
 
   const token = authHeader.replace('Bearer ', '');

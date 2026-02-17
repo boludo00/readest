@@ -241,7 +241,7 @@ export async function POST(req: NextRequest) {
       const batch = records.slice(i, i + BATCH_SIZE);
 
       const dbRecords = batch.map((rec) => {
-        const dbRec = transformsToDB[collection](rec, user.$id);
+        const dbRec = transformsToDB[collection](rec as never, user.$id);
         rec.user_id = user.$id;
         rec.book_hash = dbRec.book_hash;
         return { original: rec, db: dbRec };

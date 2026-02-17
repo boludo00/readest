@@ -171,13 +171,17 @@ export class KOSyncClient {
    * @param book - The book to update progress for
    * @param progress - The current reading progress position
    * @param percentage - The reading completion percentage
-   * @returns Promise with boolean indicating success
+   * @returns 'ok' on success, 'not_found' if the server has no record for this book, 'error' otherwise
    */
-  async updateProgress(book: Book, progress: string, percentage: number): Promise<boolean> {
-    if (!this.config.userkey) return false;
+  async updateProgress(
+    book: Book,
+    progress: string,
+    percentage: number,
+  ): Promise<'ok' | 'not_found' | 'error'> {
+    if (!this.config.userkey) return 'error';
 
     const documentHash = this.getDocumentDigest(book);
-    if (!documentHash) return false;
+    if (!documentHash) return 'error';
 
     const payload = {
       document: documentHash,
@@ -193,16 +197,18 @@ export class KOSyncClient {
         body: JSON.stringify(payload),
       });
 
+      if (response.status === 404) return 'not_found';
+
       if (!response.ok) {
         console.error(
           `KOSync: Failed to update progress for ${book.title}. Status: ${response.status}`,
         );
-        return false;
+        return 'error';
       }
-      return true;
+      return 'ok';
     } catch (e) {
       console.error('KOSync updateProgress failed', e);
-      return false;
+      return 'error';
     }
   }
 
