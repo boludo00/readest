@@ -67,6 +67,7 @@ import {
   getBreadcrumbs,
 } from './utils/libraryUtils';
 import Spinner from '@/components/Spinner';
+import BottomNav from '@/components/BottomNav';
 import LibraryHeader from './components/LibraryHeader';
 import Bookshelf from './components/Bookshelf';
 import GroupHeader from './components/GroupHeader';
@@ -776,6 +777,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
     return <div className={clsx('full-height', !appService?.isLinuxApp && 'bg-base-200')} />;
   }
 
+  const isMobile = appService?.isMobile ?? false;
   const showBookshelf = libraryLoaded || libraryBooks.length > 0;
 
   return (
@@ -885,7 +887,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
               style={{
                 paddingTop: '0px',
                 paddingRight: `${insets.right}px`,
-                paddingBottom: `${insets.bottom}px`,
+                paddingBottom: `${(isMobile ? 56 : 0) + insets.bottom}px`,
                 paddingLeft: `${insets.left}px`,
               }}
             >
@@ -948,6 +950,7 @@ const LibraryPageContent = ({ searchParams }: { searchParams: ReadonlyURLSearchP
       {isSettingsDialogOpen && <SettingsDialog bookKey={''} />}
       {showCatalogManager && <CatalogDialog onClose={handleDismissOPDSDialog} />}
       <Toast />
+      {isMobile && <BottomNav />}
     </div>
   );
 };

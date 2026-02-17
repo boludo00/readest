@@ -120,7 +120,10 @@ export function useSync(bookKey?: string) {
     // On iOS/Tauri the JWT stored in localStorage may be expired; syncSession
     // refreshes it, but if we fire before that completes we'll get a 403 and
     // the old code would redirect to /auth — causing the visible "app reload."
-    if (!isAuthReadyRef.current) return 0;
+    if (!isAuthReadyRef.current) {
+      console.warn('[Sync] pullChanges blocked: isAuthReady is false');
+      return 0;
+    }
 
     setSyncing(true);
     setSyncError(null);
@@ -272,7 +275,10 @@ export function useSync(bookKey?: string) {
 
   const syncStatistics = useCallback(
     async (records?: BookStatisticsRecord[], op: SyncOp = 'both') => {
-      if (!lastSyncedAtInited) return;
+      if (!lastSyncedAtInited) {
+        console.warn('[Sync] syncStatistics blocked: lastSyncedAtInited is false');
+        return;
+      }
       if ((op === 'push' || op === 'both') && records?.length) {
         await pushChanges({ statistics: records });
       }

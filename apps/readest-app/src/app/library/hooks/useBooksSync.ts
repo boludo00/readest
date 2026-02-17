@@ -14,7 +14,7 @@ import { eventDispatcher } from '@/utils/event';
 export const useBooksSync = () => {
   const _ = useTranslation();
   const { user } = useAuth();
-  const { appService } = useEnv();
+  const { envConfig, appService } = useEnv();
   const { library, isSyncing, libraryLoaded } = useLibraryStore();
   const { setLibrary, setIsSyncing, setSyncProgress } = useLibraryStore();
   const {
@@ -25,7 +25,7 @@ export const useBooksSync = () => {
     syncStatistics,
     lastSyncedAtBooks,
   } = useSync();
-  const { mergeFromCloud } = useStatisticsStore();
+  const { mergeFromCloud, saveStatistics } = useStatisticsStore();
   const isPullingRef = useRef(false);
 
   const getNewBooks = useCallback(() => {
@@ -198,8 +198,10 @@ export const useBooksSync = () => {
   useEffect(() => {
     if (syncedStatistics?.length) {
       mergeFromCloud(syncedStatistics);
+      // Persist merged data so statistics/page.tsx loadStatistics() reads the merged state
+      saveStatistics(envConfig);
     }
-  }, [syncedStatistics, mergeFromCloud]);
+  }, [syncedStatistics, mergeFromCloud, saveStatistics, envConfig]);
 
   return { pullLibrary, pushLibrary };
 };

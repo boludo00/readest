@@ -34,7 +34,10 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
   const config = useStatisticsStore((state) => state.config);
   const loaded = useStatisticsStore((state) => state.loaded);
   const { startSession, updateSessionActivity, endSession, saveStatistics } = useStatisticsStore();
-  const { syncStatistics } = useSync(bookKey);
+  // Statistics sync doesn't need per-book config, so call useSync() without bookKey.
+  // Passing bookKey would block lastSyncedAtInited via the config?.location guard,
+  // silently preventing statistics sync from running for new books.
+  const { syncStatistics } = useSync();
 
   const IDLE_TIMEOUT_MS = (config.idleTimeoutMinutes || 5) * 60 * 1000;
 
@@ -66,7 +69,6 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
     // Don't start if session already exists - use getState() to avoid dependency on activeSessions
     const currentActiveSessions = useStatisticsStore.getState().activeSessions;
     if (currentActiveSessions[bookKey]) {
-      console.log('[BookSessionTracker] Session already exists for', bookKey);
       return;
     }
 

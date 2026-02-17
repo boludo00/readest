@@ -77,6 +77,7 @@ import {
 } from '@/libs/storage';
 import { ClosableFile } from '@/utils/file';
 import { ProgressHandler } from '@/utils/transfer';
+import { getAccessToken } from '@/utils/access';
 import { TxtToEpubConverter } from '@/utils/txt';
 import { BOOK_FILE_NOT_FOUND_ERROR } from './errors';
 import { CustomTextureInfo } from '@/styles/textures';
@@ -626,12 +627,20 @@ export abstract class BaseAppService implements AppService {
         }
       }),
     );
+    const token = await getAccessToken();
+    const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
     await Promise.all(
       downloadUrls.map(async (file) => {
         try {
           const dst = `${this.localBooksDir}/${file.lfp}`;
           if (!file.downloadUrl) return;
-          await downloadFile({ appService: this, dst, cfp: file.cfp, url: file.downloadUrl });
+          await downloadFile({
+            appService: this,
+            dst,
+            cfp: file.cfp,
+            url: file.downloadUrl,
+            headers: authHeaders,
+          });
           const book = booksLfps.get(file.lfp);
           if (book && !book.coverDownloadedAt) {
             book.coverDownloadedAt = Date.now();

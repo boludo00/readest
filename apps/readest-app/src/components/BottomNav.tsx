@@ -30,26 +30,30 @@ const BottomNav: React.FC = () => {
 
   return (
     <nav
-      className='btm-nav btm-nav-sm bg-base-200 border-base-300 z-50 border-t'
-      style={{
-        paddingBottom: insets?.bottom ? `${insets.bottom}px` : '0px',
-        height: `calc(56px + ${insets?.bottom || 0}px)`,
-      }}
+      className='bg-base-200 border-base-300 fixed bottom-0 left-0 right-0 z-50 border-t'
+      style={{ paddingBottom: `${insets?.bottom || 0}px` }}
     >
-      {tabs.map((tab) => (
-        <button
-          key={tab.path}
-          className={clsx(
-            'text-base-content/60 transition-colors',
-            isActive(tab.path) && 'active text-primary',
-          )}
-          onClick={() => router.push(tab.path)}
-          aria-label={tab.label}
-        >
-          <tab.icon size={iconSize} />
-          <span className='btm-nav-label text-xs'>{tab.label}</span>
-        </button>
-      ))}
+      <div className='flex h-14 w-full'>
+        {tabs.map((tab) => (
+          <button
+            key={tab.path}
+            className={clsx(
+              'relative flex flex-1 flex-col items-center justify-center gap-1 transition-colors',
+              isActive(tab.path) ? 'text-primary' : 'text-base-content/50',
+            )}
+            onClick={() => router.push(tab.path)}
+            aria-label={tab.label}
+          >
+            {isActive(tab.path) && (
+              <span className='bg-primary absolute left-1/2 top-0 h-0.5 w-10 -translate-x-1/2 rounded-full' />
+            )}
+            <tab.icon size={iconSize} />
+            <span className={clsx('text-xs', isActive(tab.path) ? 'font-semibold' : 'font-normal')}>
+              {tab.label}
+            </span>
+          </button>
+        ))}
+      </div>
     </nav>
   );
 };

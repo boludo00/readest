@@ -37,6 +37,7 @@ function loadEnvFile(filePath: string) {
 }
 
 loadEnvFile(resolve(__dirname, '..', '.env.tauri'));
+loadEnvFile(resolve(__dirname, '..', '.env.local'));
 
 const endpoint = process.env['NEXT_PUBLIC_APPWRITE_ENDPOINT'] || '';
 const projectId = process.env['NEXT_PUBLIC_APPWRITE_PROJECT_ID'] || '';
