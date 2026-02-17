@@ -10,6 +10,7 @@ import {
 } from '../types';
 import { aiLogger } from '../logger';
 import { useXRayStore } from '@/store/xrayStore';
+import { getAPIBaseUrl } from '@/services/environment';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const lunr = require('lunr') as typeof import('lunr');
@@ -715,7 +716,7 @@ class AIStore {
         throw new Error('No X-Ray data to upload');
       }
 
-      const response = await fetch('/api/xray/upload', {
+      const response = await fetch(`${getAPIBaseUrl()}/xray/upload`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -744,11 +745,14 @@ class AIStore {
 
   async downloadEntities(bookHash: string, token: string): Promise<boolean> {
     try {
-      const response = await fetch(`/api/xray/download?bookHash=${encodeURIComponent(bookHash)}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
+      const response = await fetch(
+        `${getAPIBaseUrl()}/xray/download?bookHash=${encodeURIComponent(bookHash)}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         },
-      });
+      );
 
       if (response.status === 404) {
         // No cloud data exists for this book
@@ -781,12 +785,15 @@ class AIStore {
 
   async deleteCloudEntities(bookHash: string, token: string): Promise<void> {
     try {
-      const response = await fetch(`/api/xray/delete?bookHash=${encodeURIComponent(bookHash)}`, {
-        method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${token}`,
+      const response = await fetch(
+        `${getAPIBaseUrl()}/xray/delete?bookHash=${encodeURIComponent(bookHash)}`,
+        {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         },
-      });
+      );
 
       if (!response.ok) {
         const error = await response.json();

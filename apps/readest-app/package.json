@@ -142,6 +142,7 @@
     "react-responsive": "^10.0.0",
     "react-virtuoso": "^4.17.0",
     "react-window": "^1.8.11",
+    "recharts": "^3.7.0",
     "remark-gfm": "^4.0.1",
     "semver": "^7.7.1",
     "streamdown": "^1.6.10",
