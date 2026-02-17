@@ -14,6 +14,7 @@ import { useSidebarStore } from '@/store/sidebarStore';
 import { useNotebookStore } from '@/store/notebookStore';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useDeviceControlStore } from '@/store/deviceStore';
+import { useXRayStore } from '@/store/xrayStore';
 import { useScreenWakeLock } from '@/hooks/useScreenWakeLock';
 import { useTransferQueue } from '@/hooks/useTransferQueue';
 import { eventDispatcher } from '@/utils/event';
@@ -29,6 +30,7 @@ import { Toast } from '@/components/Toast';
 import { getLocale } from '@/utils/misc';
 import { initDayjs } from '@/utils/time';
 import ReaderContent from './ReaderContent';
+import XRayExtractionBanner from './XRayExtractionBanner';
 
 /*
 Z-Index Layering Guide:
@@ -66,6 +68,16 @@ const Reader: React.FC<{ ids?: string }> = ({ ids }) => {
   const { isNotebookVisible, isNotebookPinned } = useNotebookStore();
   const { getIsNotebookVisible, setNotebookVisible } = useNotebookStore();
   const { isDarkMode, systemUIAlwaysHidden, isRoundedWindow } = useThemeStore();
+  const { extractionAbortController, setBackgroundExtracting, setExtractionAbortController } =
+    useXRayStore();
+
+  const handleCancelExtraction = React.useCallback(() => {
+    if (extractionAbortController) {
+      extractionAbortController.abort();
+      setExtractionAbortController(null);
+    }
+    setBackgroundExtracting(false);
+  }, [extractionAbortController, setBackgroundExtracting, setExtractionAbortController]);
 
   useTheme({ systemUIVisible: settings.alwaysShowStatusBar, appThemeColor: 'base-100' });
   useScreenWakeLock(settings.screenWakeLock);
@@ -171,6 +183,7 @@ const Reader: React.FC<{ ids?: string }> = ({ ids }) => {
         <KOSyncSettingsWindow />
         <ProofreadRulesManager />
         <Toast />
+        <XRayExtractionBanner onCancel={handleCancelExtraction} />
       </Suspense>
     </div>
   ) : (

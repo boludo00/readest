@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useEffect, useCallback, useRef, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import {
   Loader2Icon,
@@ -10,6 +10,11 @@ import {
   ListIcon,
   Share2Icon,
   BookOpenIcon,
+  ArrowUpCircleIcon,
+  CloudCheckIcon,
+  CloudUploadIcon,
+  CloudOffIcon,
+  CloudDownloadIcon,
 } from 'lucide-react';
 
 import { useTranslation } from '@/hooks/useTranslation';
@@ -18,15 +23,18 @@ import { useBookDataStore } from '@/store/bookDataStore';
 import { useReaderStore } from '@/store/readerStore';
 import { useXRayStore, searchEntities } from '@/store/xrayStore';
 import { useEnv } from '@/context/EnvContext';
+import { useAuth } from '@/context/AuthContext';
 import {
   extractEntities,
   clearEntityIndex,
-  getExtractedPage,
   isBookIndexed,
   aiLogger,
   getAIConfigError,
 } from '@/services/ai';
+import { aiStore } from '@/services/ai/storage/aiStore';
 import type { EntityType } from '@/services/ai/types';
+import { eventDispatcher } from '@/utils/event';
+import { getAccessToken } from '@/utils/access';
 
 import { Button } from '@/components/ui/button';
 import AIConfigBanner from './AIConfigBanner';
@@ -50,15 +58,17 @@ interface XRayBrowserProps {
 const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
   const _ = useTranslation();
   const { appService } = useEnv();
+  const { isAuthReady, user } = useAuth();
   const { settings } = useSettingsStore();
   const { getBookData } = useBookDataStore();
   const { getProgress } = useReaderStore();
   const abortRef = useRef<AbortController | null>(null);
+  const extractionLockRef = useRef(false);
 
   const bookData = getBookData(bookKey);
   const progress = getProgress(bookKey);
   const bookHash = bookKey.split('-')[0] || '';
-  const currentPage = progress?.pageinfo?.current ?? 0;
+  const currentSectionIndex = progress?.sectionId;
   const aiSettings = settings?.aiSettings;
 
   const {
@@ -72,18 +82,26 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
     isEntityIndexed,
     isExtracting,
     isBackgroundExtracting,
-    lastExtractedPage,
+    isDownloadingFromCloud,
+    cloudDownloadError,
+    lastExtractedSection,
+    totalSections,
     extractionProgress,
     extractionError,
+    syncStatus,
     loadEntities,
+    downloadFromCloud,
     setFilterType,
     setSearchQuery,
     setViewMode,
     selectEntity,
-    setExtracting,
+    setBackgroundExtracting,
     setExtractionProgress,
     setExtractionError,
+    setExtractionAbortController,
   } = useXRayStore();
+
+  const [hasNewContent, setHasNewContent] = useState(false);
 
   // Build chapter titles map from book data
   const chapterTitles = React.useMemo(() => {
@@ -98,40 +116,70 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
   }, [bookData?.bookDoc?.toc]);
 
   useEffect(() => {
-    if (bookHash) {
+    if (bookHash && isAuthReady) {
       loadEntities(bookHash);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookHash]);
+  }, [bookHash, isAuthReady]);
+
+  // Detect when the user has read significantly beyond the last extraction (≥2 new chapters)
+  const SECTION_UPDATE_THRESHOLD = 2;
+  useEffect(() => {
+    if (
+      isEntityIndexed &&
+      !isExtracting &&
+      currentSectionIndex !== undefined &&
+      lastExtractedSection > 0 &&
+      currentSectionIndex - lastExtractedSection >= SECTION_UPDATE_THRESHOLD
+    ) {
+      setHasNewContent(true);
+    } else {
+      setHasNewContent(false);
+    }
+  }, [isEntityIndexed, isExtracting, currentSectionIndex, lastExtractedSection]);
 
   const handleExtract = useCallback(async () => {
     if (!aiSettings || !bookHash) return;
-
-    const indexed = await isBookIndexed(bookHash);
-    if (!indexed) {
-      setExtractionError(_('Please index this book first in the AI tab'));
-      return;
-    }
-
-    setExtracting(true);
-    setExtractionError(null);
-    abortRef.current = new AbortController();
+    if (extractionLockRef.current) return;
+    extractionLockRef.current = true;
 
     try {
+      const indexed = await isBookIndexed(bookHash);
+      if (!indexed) {
+        setExtractionError(_('Please index this book first in the AI tab'));
+        return;
+      }
+
+      // Run extraction in background
+      setBackgroundExtracting(true);
+      setExtractionError(null);
+      abortRef.current = new AbortController();
+      setExtractionAbortController(abortRef.current);
+
       const result = await extractEntities(
         bookHash,
         aiSettings,
         setExtractionProgress,
         abortRef.current.signal,
-        currentPage || undefined,
+        aiSettings.spoilerProtection ? currentSectionIndex : undefined,
       );
+
       console.log('[XRay] Extraction complete, entities:', result.length);
       useXRayStore.setState({
         entities: result,
         isEntityIndexed: true,
-        isExtracting: false,
-        lastExtractedPage: currentPage || 0,
+        isBackgroundExtracting: false,
+        lastExtractedSection: currentSectionIndex ?? 0,
         extractionProgress: null,
+        extractionAbortController: null,
+        syncStatus: 'synced', // Upload happens in entityExtractor
+      });
+
+      // Show completion toast
+      eventDispatcher.dispatch('toast', {
+        message: _('X-Ray extraction complete! 🎉'),
+        type: 'success',
+        timeout: 5000,
       });
     } catch (e) {
       console.error('[XRay] Extraction failed:', (e as Error).message, (e as Error).stack);
@@ -139,28 +187,52 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
         setExtractionError((e as Error).message);
         aiLogger.entity.extractError(bookHash, (e as Error).message);
       }
-      setExtracting(false);
+      setBackgroundExtracting(false);
       setExtractionProgress(null);
+      setExtractionAbortController(null);
+    } finally {
+      extractionLockRef.current = false;
     }
   }, [
     aiSettings,
     bookHash,
-    currentPage,
+    currentSectionIndex,
+    appService,
     _,
-    setExtracting,
+    setBackgroundExtracting,
     setExtractionError,
     setExtractionProgress,
+    setExtractionAbortController,
   ]);
+
+  const handleUpdate = useCallback(async () => {
+    setHasNewContent(false);
+    await handleExtract();
+  }, [handleExtract]);
 
   const handleCancel = useCallback(() => {
     abortRef.current?.abort();
-    setExtracting(false);
+    extractionLockRef.current = false;
+    setBackgroundExtracting(false);
     setExtractionProgress(null);
-  }, [setExtracting, setExtractionProgress]);
+    setExtractionAbortController(null);
+  }, [setBackgroundExtracting, setExtractionProgress, setExtractionAbortController]);
 
   const handleRebuild = useCallback(async () => {
     if (!appService) return;
     if (!(await appService.ask(_('Rebuild X-Ray? This will re-extract all entities.')))) return;
+    // Delete cloud data first so stale data is not synced back on other devices
+    try {
+      const token = await getAccessToken();
+      if (token) {
+        await aiStore.deleteCloudEntities(bookHash, token);
+      }
+    } catch (error) {
+      console.warn(
+        '[XRay] Cloud delete failed during rebuild, continuing with local clear:',
+        error,
+      );
+    }
     await clearEntityIndex(bookHash);
     useXRayStore.setState({ entities: [], isEntityIndexed: false, selectedEntityId: null });
     handleExtract();
@@ -174,60 +246,11 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
           e.aliases.some((a) => a.toLowerCase() === name.toLowerCase()),
       );
       if (found) {
-        selectEntity(found.id, currentPage, chapterTitles);
+        selectEntity(found.id, currentSectionIndex, chapterTitles);
       }
     },
-    [entities, selectEntity, currentPage, chapterTitles],
+    [entities, selectEntity, currentSectionIndex, chapterTitles],
   );
-
-  // Seamless background incremental extraction as the user reads.
-  // Runs silently without showing progress UI so the user never notices.
-  const backgroundAbortRef = useRef<AbortController | null>(null);
-  useEffect(() => {
-    if (!bookHash || !aiSettings || !isEntityIndexed) return;
-    if (isExtracting || isBackgroundExtracting || !currentPage) return;
-
-    const runBackgroundExtraction = async () => {
-      const extractedPage = lastExtractedPage || (await getExtractedPage(bookHash)) || 0;
-      if (extractedPage <= 0 || currentPage - extractedPage < 20) return;
-
-      backgroundAbortRef.current = new AbortController();
-      useXRayStore.setState({ isBackgroundExtracting: true });
-
-      try {
-        const result = await extractEntities(
-          bookHash,
-          aiSettings,
-          undefined,
-          backgroundAbortRef.current.signal,
-          currentPage,
-        );
-        useXRayStore.setState({
-          entities: result,
-          lastExtractedPage: currentPage,
-          isBackgroundExtracting: false,
-        });
-      } catch (e) {
-        if ((e as Error).message !== 'Extraction cancelled') {
-          aiLogger.entity.extractError(bookHash, `background: ${(e as Error).message}`);
-        }
-        useXRayStore.setState({ isBackgroundExtracting: false });
-      }
-    };
-    runBackgroundExtraction();
-
-    return () => {
-      backgroundAbortRef.current?.abort();
-    };
-  }, [
-    bookHash,
-    aiSettings,
-    isEntityIndexed,
-    isExtracting,
-    isBackgroundExtracting,
-    currentPage,
-    lastExtractedPage,
-  ]);
 
   // Compute subgraph entities for drill-down in graph mode
   // Includes selected entity + all 1-hop neighbors (forward and reverse) of any type
@@ -303,14 +326,14 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
         onSelectEntity={handleSelectEntityByName}
         onRebuild={handleRebuild}
         bookHash={bookHash}
-        spoilerMaxPage={aiSettings.spoilerProtection ? currentPage : undefined}
+        spoilerMaxSection={aiSettings.spoilerProtection ? currentSectionIndex : undefined}
         chapterTitles={chapterTitles}
       />
     );
   }
 
-  // Extracting state
-  if (isExtracting) {
+  // Extracting state (only show blocking UI if NOT in background)
+  if (isExtracting && !isBackgroundExtracting) {
     const progressPercent =
       extractionProgress && extractionProgress.total > 0
         ? Math.round((extractionProgress.current / extractionProgress.total) * 100)
@@ -344,8 +367,8 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
     );
   }
 
-  // Not extracted yet (with or without error)
-  if (!isEntityIndexed) {
+  // Not extracted yet or partially extracted (with or without error)
+  if (!isEntityIndexed && entities.length === 0) {
     return (
       <div className='flex h-full flex-col items-center justify-center gap-3 p-4 text-center'>
         {extractionError ? (
@@ -374,6 +397,27 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
                 {_('Extract characters, locations, and themes from this book')}
               </p>
             </div>
+            {user && (
+              <div className='flex flex-col items-center gap-2'>
+                <Button
+                  onClick={() => downloadFromCloud(bookHash)}
+                  disabled={isDownloadingFromCloud}
+                  size='sm'
+                  variant='outline'
+                  className='h-8 text-xs'
+                >
+                  {isDownloadingFromCloud ? (
+                    <Loader2Icon className='mr-1.5 size-3.5 animate-spin' />
+                  ) : (
+                    <CloudDownloadIcon className='mr-1.5 size-3.5' />
+                  )}
+                  {isDownloadingFromCloud ? _('Loading...') : _('Load from Cloud')}
+                </Button>
+                {cloudDownloadError && (
+                  <p className='text-muted-foreground text-xs'>{cloudDownloadError}</p>
+                )}
+              </div>
+            )}
             <Button onClick={handleExtract} size='sm' className='h-8 text-xs'>
               <AtomIcon className='mr-1.5 size-3.5' />
               {_('Start Extraction')}
@@ -388,7 +432,7 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
   const filteredEntities = searchEntities(
     entities,
     searchQuery,
-    aiSettings.spoilerProtection ? currentPage : undefined,
+    aiSettings.spoilerProtection ? currentSectionIndex : undefined,
     filterType,
   );
 
@@ -441,6 +485,29 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
             >
               <Share2Icon className='size-3.5' />
             </button>
+            {/* Cloud sync status indicator */}
+            <div className='ml-1 flex items-center'>
+              {syncStatus === 'synced' && (
+                <div title={_('Synced to cloud')}>
+                  <CloudCheckIcon className='text-primary size-3.5' />
+                </div>
+              )}
+              {syncStatus === 'uploading' && (
+                <div title={_('Uploading to cloud...')}>
+                  <CloudUploadIcon className='text-primary size-3.5 animate-pulse' />
+                </div>
+              )}
+              {syncStatus === 'local' && (
+                <div title={_('Local only (not synced)')}>
+                  <CloudOffIcon className='text-base-content/30 size-3.5' />
+                </div>
+              )}
+              {syncStatus === 'error' && (
+                <div title={_('Sync failed')}>
+                  <CloudOffIcon className='size-3.5 text-amber-500' />
+                </div>
+              )}
+            </div>
           </div>
         </div>
         <input
@@ -452,15 +519,32 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
         />
       </div>
 
+      {/* Partial extraction banner — entities from completed passes survived a crash */}
+      {!isEntityIndexed && entities.length > 0 && !isExtracting && (
+        <div className='border-base-content/10 flex items-center gap-2 border-b px-3 py-1.5'>
+          <AlertCircleIcon className='size-3 shrink-0 text-amber-500' />
+          <span className='text-base-content/60 flex-1 text-[11px]'>
+            {_('Extraction incomplete — partial results shown')}
+          </span>
+          <button
+            type='button'
+            onClick={handleExtract}
+            className='text-primary text-[11px] font-medium'
+          >
+            {_('Continue')}
+          </button>
+        </div>
+      )}
+
       {/* Reading progress indicator */}
-      {aiSettings.spoilerProtection && progress?.pageinfo && progress.pageinfo.total > 0 && (
+      {aiSettings.spoilerProtection && lastExtractedSection > 0 && totalSections > 0 && (
         <div className='border-base-content/10 border-b px-3 py-1.5'>
           <div className='flex items-center gap-1.5'>
             <BookOpenIcon className='text-base-content/40 size-3' />
             <span className='text-base-content/50 text-[11px]'>
-              {_('Analyzed to page {{current}} of {{total}}', {
-                current: currentPage,
-                total: progress.pageinfo.total,
+              {_('Analyzed through {{chapter}}', {
+                chapter:
+                  chapterTitles.get(lastExtractedSection) || `Section ${lastExtractedSection + 1}`,
               })}
             </span>
           </div>
@@ -468,10 +552,27 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
             <div
               className='bg-primary/50 h-full rounded-full transition-all duration-500'
               style={{
-                width: `${Math.round((currentPage / progress.pageinfo.total) * 100)}%`,
+                width: `${Math.round((lastExtractedSection / totalSections) * 100)}%`,
               }}
             />
           </div>
+        </div>
+      )}
+
+      {/* New content available banner */}
+      {hasNewContent && (
+        <div className='border-base-content/10 flex items-center gap-2 border-b px-3 py-1.5'>
+          <ArrowUpCircleIcon className='text-primary size-3 shrink-0' />
+          <span className='text-base-content/60 flex-1 text-[11px]'>
+            {_("You've read further — update X-Ray to include new content")}
+          </span>
+          <button
+            type='button'
+            onClick={handleUpdate}
+            className='text-primary text-[11px] font-medium'
+          >
+            {_('Update')}
+          </button>
         </div>
       )}
 
@@ -481,7 +582,7 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
           <div className={clsx('overflow-hidden', selectedEntityId ? 'h-2/5' : 'flex-1')}>
             <XRayGraphView
               entities={selectedEntityId ? subgraphEntities : filteredEntities}
-              onSelectEntity={(id) => selectEntity(id, currentPage, chapterTitles)}
+              onSelectEntity={(id) => selectEntity(id, currentSectionIndex, chapterTitles)}
               highlightedEntityId={selectedEntityId ?? undefined}
             />
           </div>
@@ -494,7 +595,7 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
                 onRebuild={handleRebuild}
                 compact
                 bookHash={bookHash}
-                spoilerMaxPage={aiSettings.spoilerProtection ? currentPage : undefined}
+                spoilerMaxSection={aiSettings.spoilerProtection ? currentSectionIndex : undefined}
                 chapterTitles={chapterTitles}
               />
             </div>
@@ -524,7 +625,7 @@ const XRayBrowser: React.FC<XRayBrowserProps> = ({ bookKey }) => {
                 <XRayEntityCard
                   key={entity.id}
                   entity={entity}
-                  onClick={() => selectEntity(entity.id, currentPage, chapterTitles)}
+                  onClick={() => selectEntity(entity.id, currentSectionIndex, chapterTitles)}
                 />
               ))}
             </div>
