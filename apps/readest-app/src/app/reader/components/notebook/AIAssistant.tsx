@@ -365,7 +365,7 @@ const AIAssistant = ({ bookKey }: AIAssistantProps) => {
   }
 
   // Provider config incomplete (e.g. missing API key) — block before indexing/chatting
-  if (!isIndexed && getAIConfigError(aiSettings)) {
+  if (!indexed && getAIConfigError(aiSettings)) {
     return <AIConfigBanner settings={aiSettings} />;
   }
 

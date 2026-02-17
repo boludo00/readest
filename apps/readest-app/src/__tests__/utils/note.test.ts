@@ -5,7 +5,7 @@ describe('renderNoteTemplate', () => {
   const sampleData: NoteTemplateData = {
     title: 'The Great Gatsby',
     author: 'F. Scott Fitzgerald',
-    exportDate: '2024-01-15',
+    exportDate: 1705276800000,
     chapters: [
       {
         title: 'Chapter 1',
@@ -93,7 +93,7 @@ describe('renderNoteTemplate', () => {
       const emptyData: NoteTemplateData = {
         title: 'Empty Book',
         author: 'Nobody',
-        exportDate: '2024-01-15',
+        exportDate: 1705276800000,
         chapters: [],
       };
       const template = '{% for chapter in chapters %}{{ chapter.title }}{% endfor %}';
@@ -407,7 +407,7 @@ describe('renderNoteTemplate', () => {
       const emptyData: NoteTemplateData = {
         title: 'Empty Book',
         author: 'Unknown',
-        exportDate: '2024-01-15',
+        exportDate: 1705276800000,
         chapters: [],
       };
       const template = `## {{ title }}

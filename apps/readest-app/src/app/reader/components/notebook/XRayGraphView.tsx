@@ -92,8 +92,10 @@ interface GraphNodeExtra {
 
 type GraphNode = NodeObject<GraphNodeExtra>;
 type GraphLink = LinkObject<GraphNodeExtra, object>;
-type ForceGraphComponent = React.ComponentType<ForceGraphProps<GraphNodeExtra, object>>;
 type GraphRef = ForceGraphMethods<GraphNodeExtra, object>;
+type ForceGraphComponent = React.ComponentType<
+  ForceGraphProps<GraphNodeExtra, object> & { ref?: React.Ref<GraphRef> }
+>;
 
 interface XRayGraphViewProps {
   entities: BookEntity[];
@@ -168,7 +170,8 @@ const XRayGraphView: React.FC<XRayGraphViewProps> = ({
   const [dimensions, setDimensions] = useState({ width: 300, height: 400 });
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [ForceGraph, setForceGraph] = useState<ForceGraphComponent | null>(null);
-  const [currentZoom, setCurrentZoom] = useState(1);
+  const [showZoomHint, setShowZoomHint] = useState(true);
+  const zoomRef = useRef(1);
   const fittedRef = useRef(false);
   const prevEntityKeyRef = useRef('');
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
@@ -232,9 +235,9 @@ const XRayGraphView: React.FC<XRayGraphViewProps> = ({
   useEffect(() => {
     if (!graphRef.current) return;
     const charge = graphRef.current.d3Force('charge');
-    if (charge && typeof charge.strength === 'function') {
+    if (charge && typeof charge['strength'] === 'function') {
       const strength = Math.min(-80, -200 - visibleEntities.length * 2);
-      charge.strength(strength);
+      charge['strength'](strength);
       graphRef.current.d3ReheatSimulation();
     }
   }, [ForceGraph, visibleEntities.length]);
@@ -310,7 +313,13 @@ const XRayGraphView: React.FC<XRayGraphViewProps> = ({
   }, []);
 
   const handleZoom = useCallback((transform: { k: number }) => {
-    setCurrentZoom(transform.k);
+    const wasAbove = zoomRef.current >= LABEL_ZOOM_THRESHOLD;
+    const isAbove = transform.k >= LABEL_ZOOM_THRESHOLD;
+    zoomRef.current = transform.k;
+    if (wasAbove !== isAbove) {
+      // Defer setState to avoid updating during ForceGraph2D render cycle
+      requestAnimationFrame(() => setShowZoomHint(!isAbove));
+    }
   }, []);
 
   const nodeCanvasObject = useCallback(
@@ -477,7 +486,7 @@ const XRayGraphView: React.FC<XRayGraphViewProps> = ({
       </div>
 
       {/* Zoom hint */}
-      {currentZoom < LABEL_ZOOM_THRESHOLD && (
+      {showZoomHint && (
         <div className='text-base-content/30 absolute bottom-2 left-1/2 z-10 -translate-x-1/2 text-[10px]'>
           Scroll to zoom in for labels
         </div>
@@ -486,7 +495,7 @@ const XRayGraphView: React.FC<XRayGraphViewProps> = ({
       {/* Graph */}
       {ForceGraph && (
         <ForceGraph
-          ref={graphRef}
+          ref={graphRef as React.Ref<GraphRef>}
           graphData={graphData}
           width={dimensions.width}
           height={dimensions.height}

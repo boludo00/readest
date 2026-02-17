@@ -192,7 +192,7 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
 
     if (isCfiInLocation(ttsLocation, location)) {
       setShowBackToCurrentTTSLocation(false);
-      const range = view?.tts?.getLastRange() as Range | null;
+      const range = (view?.tts as { getLastRange?: () => Range | null })?.getLastRange?.() ?? null;
       if (range) {
         view?.tts?.highlight(range);
       }
@@ -419,7 +419,7 @@ export const useTTSControl = ({ bookKey, onRequestHidePanel }: UseTTSControlProp
       const ttsController = new TTSController(
         appService,
         view,
-        !!user?.id,
+        !!user?.$id,
         preprocessSSMLForTTS,
         handleSectionChange,
       );

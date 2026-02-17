@@ -62,7 +62,7 @@ interface XRayEntityDetailProps {
   onRebuild: () => void;
   compact?: boolean;
   bookHash?: string;
-  spoilerMaxPage?: number;
+  spoilerMaxSection?: number;
   chapterTitles?: Map<number, string>;
 }
 
@@ -73,7 +73,7 @@ const XRayEntityDetail: React.FC<XRayEntityDetailProps> = ({
   onRebuild,
   compact,
   bookHash,
-  spoilerMaxPage,
+  spoilerMaxSection,
   chapterTitles,
 }) => {
   const _ = useTranslation();
@@ -103,7 +103,7 @@ const XRayEntityDetail: React.FC<XRayEntityDetailProps> = ({
 
       // Filter chunks that mention the entity, respecting spoiler limit
       const matching = allChunks.filter((chunk) => {
-        if (spoilerMaxPage !== undefined && chunk.pageNumber > spoilerMaxPage) return false;
+        if (spoilerMaxSection !== undefined && chunk.sectionIndex > spoilerMaxSection) return false;
         return namePattern.test(chunk.text);
       });
 
@@ -126,7 +126,7 @@ const XRayEntityDetail: React.FC<XRayEntityDetailProps> = ({
     } finally {
       setIsLoadingExcerpts(false);
     }
-  }, [excerptMap, bookHash, entity.name, entity.aliases, spoilerMaxPage, chapterTitles]);
+  }, [excerptMap, bookHash, entity.name, entity.aliases, spoilerMaxSection, chapterTitles]);
 
   const toggleChapter = useCallback(
     (chapter: string) => {
