@@ -2,15 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
 import { useSyncContext } from '@/context/SyncContext';
-import { SyncData, SyncOp, SyncResult, SyncType } from '@/libs/sync';
+import { BookStatisticsRecord, SyncData, SyncOp, SyncResult, SyncType } from '@/libs/sync';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import {
   transformBookConfigFromDB,
   transformBookNoteFromDB,
   transformBookFromDB,
+  transformBookStatisticsFromDB,
 } from '@/utils/transform';
-import { DBBook, DBBookConfig, DBBookNote } from '@/types/records';
+import { DBBook, DBBookConfig, DBBookNote, DBBookStatistics } from '@/types/records';
 import { Book, BookConfig, BookDataRecord, BookNote } from '@/types/book';
 import { useReaderStore } from '@/store/readerStore';
 
@@ -18,6 +19,7 @@ const transformsFromDB = {
   books: transformBookFromDB,
   notes: transformBookNoteFromDB,
   configs: transformBookConfigFromDB,
+  statistics: transformBookStatisticsFromDB,
 };
 
 const computeMaxTimestamp = (records: BookDataRecord[]): number => {
@@ -49,10 +51,12 @@ export function useSync(bookKey?: string) {
   const [syncingBooks, setSyncingBooks] = useState(false);
   const [syncingConfigs, setSyncingConfigs] = useState(false);
   const [syncingNotes, setSyncingNotes] = useState(false);
+  const [syncingStatistics, setSyncingStatistics] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastSyncedAtBooks, setLastSyncedAtBooks] = useState<number>(0);
   const [lastSyncedAtConfigs, setLastSyncedAtConfigs] = useState<number>(0);
   const [lastSyncedAtNotes, setLastSyncedAtNotes] = useState<number>(0);
+  const [lastSyncedAtStatistics, setLastSyncedAtStatistics] = useState<number>(0);
   const [lastSyncedAtInited, setLastSyncedAtInited] = useState(false);
 
   const [syncing, setSyncing] = useState(false);
@@ -61,10 +65,12 @@ export function useSync(bookKey?: string) {
     books: null,
     configs: null,
     notes: null,
+    statistics: null,
   });
   const [syncedBooks, setSyncedBooks] = useState<Book[] | null>(null);
   const [syncedConfigs, setSyncedConfigs] = useState<BookConfig[] | null>(null);
   const [syncedNotes, setSyncedNotes] = useState<BookNote[] | null>(null);
+  const [syncedStatistics, setSyncedStatistics] = useState<BookStatisticsRecord[] | null>(null);
 
   const { syncClient } = useSyncContext();
 
@@ -82,6 +88,7 @@ export function useSync(bookKey?: string) {
     const lastSyncedBooksAt = settings.lastSyncedAtBooks ?? 0;
     const lastSyncedConfigsAt = config?.lastSyncedAtConfig ?? settings.lastSyncedAtConfigs ?? 0;
     const lastSyncedNotesAt = config?.lastSyncedAtNotes ?? settings.lastSyncedAtNotes ?? 0;
+    const lastSyncedStatisticsAt = settings.lastSyncedAtStatistics ?? 0;
     const now = Date.now();
     setLastSyncedAtBooks(
       now - lastSyncedBooksAt > 3 * ONE_DAY_IN_MS ? 0 : lastSyncedBooksAt - ONE_DAY_IN_MS,
@@ -91,6 +98,9 @@ export function useSync(bookKey?: string) {
     );
     setLastSyncedAtNotes(
       now - lastSyncedNotesAt > 3 * ONE_DAY_IN_MS ? 0 : lastSyncedNotesAt - ONE_DAY_IN_MS,
+    );
+    setLastSyncedAtStatistics(
+      now - lastSyncedStatisticsAt > 3 * ONE_DAY_IN_MS ? 0 : lastSyncedStatisticsAt - ONE_DAY_IN_MS,
     );
     setLastSyncedAtInited(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -147,6 +157,10 @@ export function useSync(bookKey?: string) {
           } else if (bookKey) {
             setConfig(bookKey, { lastSyncedAtNotes: maxTime });
           }
+          break;
+        case 'statistics':
+          settings.lastSyncedAtStatistics = maxTime;
+          setSettings(settings);
           break;
       }
       return records?.filter((rec) => !rec.deleted_at).length || 0;
@@ -256,9 +270,34 @@ export function useSync(bookKey?: string) {
     [lastSyncedAtInited, lastSyncedAtNotes],
   );
 
+  const syncStatistics = useCallback(
+    async (records?: BookStatisticsRecord[], op: SyncOp = 'both') => {
+      if (!lastSyncedAtInited) return;
+      if ((op === 'push' || op === 'both') && records?.length) {
+        await pushChanges({ statistics: records });
+      }
+      if (op === 'pull' || op === 'both') {
+        return await pullChanges(
+          'statistics',
+          lastSyncedAtStatistics + 1,
+          setLastSyncedAtStatistics,
+          setSyncingStatistics,
+        );
+      }
+      return;
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lastSyncedAtInited, lastSyncedAtStatistics],
+  );
+
   useEffect(() => {
     if (!syncing && syncResult) {
-      const { books: dbBooks, configs: dbBookConfigs, notes: dbBookNotes } = syncResult;
+      const {
+        books: dbBooks,
+        configs: dbBookConfigs,
+        notes: dbBookNotes,
+        statistics: dbStatistics,
+      } = syncResult;
       const books = dbBooks?.map((dbBook) =>
         transformsFromDB['books'](dbBook as unknown as DBBook),
       );
@@ -268,27 +307,34 @@ export function useSync(bookKey?: string) {
       const notes = dbBookNotes?.map((dbBookNote) =>
         transformsFromDB['notes'](dbBookNote as unknown as DBBookNote),
       );
+      const statistics = dbStatistics?.map((dbStat) =>
+        transformsFromDB['statistics'](dbStat as unknown as DBBookStatistics),
+      );
       if (books) setSyncedBooks(books);
       if (configs) setSyncedConfigs(configs);
       if (notes) setSyncedNotes(notes);
+      if (statistics) setSyncedStatistics(statistics);
     }
   }, [syncResult, syncing]);
 
   return {
-    syncing: syncingBooks || syncingConfigs || syncingNotes,
+    syncing: syncingBooks || syncingConfigs || syncingNotes || syncingStatistics,
     syncError,
     syncResult,
     syncedBooks,
     syncedConfigs,
     syncedNotes,
+    syncedStatistics,
     lastSyncedAtBooks,
     lastSyncedAtNotes,
     lastSyncedAtConfigs,
+    lastSyncedAtStatistics,
     useSyncInited: lastSyncedAtInited,
     pullChanges,
     pushChanges,
     syncBooks,
     syncConfigs,
     syncNotes,
+    syncStatistics,
   };
 }

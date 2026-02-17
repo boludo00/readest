@@ -7,6 +7,7 @@ import { useEnv } from '@/context/EnvContext';
 import { useReaderStore } from '@/store/readerStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useStatisticsStore } from '@/store/statisticsStore';
+import { useSync } from '@/hooks/useSync';
 import { isTauriAppPlatform, isWebAppPlatform } from '@/services/environment';
 
 interface BookSessionTrackerProps {
@@ -33,6 +34,7 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
   const config = useStatisticsStore((state) => state.config);
   const loaded = useStatisticsStore((state) => state.loaded);
   const { startSession, updateSessionActivity, endSession, saveStatistics } = useStatisticsStore();
+  const { syncStatistics } = useSync(bookKey);
 
   const IDLE_TIMEOUT_MS = (config.idleTimeoutMinutes || 5) * 60 * 1000;
 
@@ -126,6 +128,10 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
         console.log('[BookSessionTracker] Saving after idle timeout...');
         await saveStatistics(envConfig);
         console.log('[BookSessionTracker] Save completed after idle timeout');
+        const statsRecord = useStatisticsStore.getState().getStatsForSync(session.bookHash);
+        if (statsRecord.length) {
+          syncStatistics(statsRecord, 'push');
+        }
       }
     }, IDLE_TIMEOUT_MS);
 
@@ -137,6 +143,7 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
     progress?.pageinfo,
     endSession,
     saveStatistics,
+    syncStatistics,
     envConfig,
     IDLE_TIMEOUT_MS,
   ]);
@@ -154,6 +161,10 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
         const session = endSession(bookKey, 'idle');
         if (session) {
           saveStatistics(envConfig);
+          const statsRecord = useStatisticsStore.getState().getStatsForSync(session.bookHash);
+          if (statsRecord.length) {
+            syncStatistics(statsRecord, 'push');
+          }
         }
       }
     };
@@ -222,6 +233,7 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
     endSession,
     startSession,
     saveStatistics,
+    syncStatistics,
     envConfig,
   ]);
 
@@ -235,10 +247,14 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
         const session = endSession(bookKey, 'closed');
         if (session) {
           saveStatistics(envConfig);
+          const statsRecord = useStatisticsStore.getState().getStatsForSync(session.bookHash);
+          if (statsRecord.length) {
+            syncStatistics(statsRecord, 'push');
+          }
         }
       }
     };
-  }, [bookKey, endSession, saveStatistics, envConfig]);
+  }, [bookKey, endSession, saveStatistics, syncStatistics, envConfig]);
 
   // This component doesn't render anything visible
   return null;

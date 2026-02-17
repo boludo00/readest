@@ -4,6 +4,7 @@ import { useSync } from '@/hooks/useSync';
 import { useEnv } from '@/context/EnvContext';
 import { useAuth } from '@/context/AuthContext';
 import { useLibraryStore } from '@/store/libraryStore';
+import { useStatisticsStore } from '@/store/statisticsStore';
 import { useTranslation } from '@/hooks/useTranslation';
 import { SYNC_BOOKS_INTERVAL_SEC } from '@/services/constants';
 import { throttle } from '@/utils/throttle';
@@ -16,7 +17,15 @@ export const useBooksSync = () => {
   const { appService } = useEnv();
   const { library, isSyncing, libraryLoaded } = useLibraryStore();
   const { setLibrary, setIsSyncing, setSyncProgress } = useLibraryStore();
-  const { useSyncInited, syncedBooks, syncBooks, lastSyncedAtBooks } = useSync();
+  const {
+    useSyncInited,
+    syncedBooks,
+    syncedStatistics,
+    syncBooks,
+    syncStatistics,
+    lastSyncedAtBooks,
+  } = useSync();
+  const { mergeFromCloud } = useStatisticsStore();
   const isPullingRef = useRef(false);
 
   const getNewBooks = useCallback(() => {
@@ -49,6 +58,7 @@ export const useBooksSync = () => {
           'pull',
           (libraryLoaded && library.length === 0) || fullRefresh ? 0 : undefined,
         );
+        await syncStatistics(undefined, 'pull');
         if (verbose) {
           eventDispatcher.dispatch('toast', {
             type: 'info',
@@ -59,7 +69,7 @@ export const useBooksSync = () => {
         isPullingRef.current = false;
       }
     },
-    [_, user, libraryLoaded, syncBooks],
+    [_, user, libraryLoaded, syncBooks, syncStatistics],
   );
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -184,6 +194,12 @@ export const useBooksSync = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncedBooks, updateLibrary, debouncedUpdateLibrary]);
+
+  useEffect(() => {
+    if (syncedStatistics?.length) {
+      mergeFromCloud(syncedStatistics);
+    }
+  }, [syncedStatistics, mergeFromCloud]);
 
   return { pullLibrary, pushLibrary };
 };

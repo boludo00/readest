@@ -105,6 +105,7 @@ export interface SystemSettings {
   lastSyncedAtBooks: number;
   lastSyncedAtConfigs: number;
   lastSyncedAtNotes: number;
+  lastSyncedAtStatistics: number;
 
   migrationVersion: number;
 

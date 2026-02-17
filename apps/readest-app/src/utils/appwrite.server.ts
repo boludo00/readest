@@ -12,6 +12,7 @@ export const COLLECTIONS = {
   BOOK_CONFIGS: 'book_configs',
   BOOK_NOTES: 'book_notes',
   FILES: 'files',
+  BOOK_STATISTICS: 'book_statistics',
 } as const;
 
 /**

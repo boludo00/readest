@@ -5,25 +5,33 @@ import { fetchWithTimeout } from '@/utils/fetch';
 
 const SYNC_API_ENDPOINT = getAPIBaseUrl() + '/sync';
 
-export type SyncType = 'books' | 'configs' | 'notes';
+export type SyncType = 'books' | 'configs' | 'notes' | 'statistics';
 export type SyncOp = 'push' | 'pull' | 'both';
 
 interface BookRecord extends BookDataRecord, Book {}
 interface BookConfigRecord extends BookDataRecord, BookConfig {}
 interface BookNoteRecord extends BookDataRecord, BookNote {}
 
+export interface BookStatisticsRecord extends BookDataRecord {
+  bookHash: string;
+  metaHash?: string;
+  statsJson: string;
+}
+
 export interface SyncResult {
   books: BookRecord[] | null;
   notes: BookNoteRecord[] | null;
   configs: BookConfigRecord[] | null;
+  statistics: BookStatisticsRecord[] | null;
 }
 
-export type SyncRecord = BookRecord & BookConfigRecord & BookNoteRecord;
+export type SyncRecord = BookRecord & BookConfigRecord & BookNoteRecord & BookStatisticsRecord;
 
 export interface SyncData {
   books?: Partial<BookRecord>[];
   notes?: Partial<BookNoteRecord>[];
   configs?: Partial<BookConfigRecord>[];
+  statistics?: Partial<BookStatisticsRecord>[];
 }
 
 export class SyncClient {

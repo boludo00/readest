@@ -16,6 +16,9 @@ import {
   CURRENT_STATISTICS_VERSION,
 } from '@/types/statistics';
 import { EnvConfigType } from '@/services/environment';
+import { BookStatisticsRecord } from '@/libs/sync';
+
+export const MAX_CLOUD_SESSIONS_PER_BOOK = 200;
 
 const STATISTICS_FILENAME = 'statistics.json';
 
@@ -82,6 +85,10 @@ interface StatisticsStore {
 
   // Config
   setConfig: (config: Partial<StatisticsConfig>) => void;
+
+  // Cloud sync
+  getStatsForSync: (bookHash?: string) => BookStatisticsRecord[];
+  mergeFromCloud: (records: BookStatisticsRecord[]) => void;
 }
 
 export const useStatisticsStore = create<StatisticsStore>((set, get) => ({
@@ -503,5 +510,136 @@ export const useStatisticsStore = create<StatisticsStore>((set, get) => ({
         ...configUpdate,
       },
     }));
+  },
+
+  getStatsForSync: (bookHash?) => {
+    const { sessions, bookStats } = get();
+    const targetBooks = bookHash ? [bookHash] : Object.keys(bookStats);
+    return targetBooks
+      .filter((hash) => bookStats[hash])
+      .map((hash) => {
+        const recentSessions = sessions
+          .filter((s) => s.bookHash === hash)
+          .slice(-MAX_CLOUD_SESSIONS_PER_BOOK);
+        const statsJson = JSON.stringify({ bookStats: bookStats[hash], sessions: recentSessions });
+        const updatedAt = bookStats[hash]!.lastReadAt ?? Date.now();
+        return {
+          id: hash,
+          book_hash: hash,
+          bookHash: hash,
+          meta_hash: bookStats[hash]!.metaHash,
+          metaHash: bookStats[hash]!.metaHash,
+          user_id: '',
+          statsJson,
+          updated_at: updatedAt,
+          deleted_at: null,
+        } satisfies BookStatisticsRecord;
+      });
+  },
+
+  mergeFromCloud: (records) => {
+    if (!records.length) return;
+
+    set((state) => {
+      const mergedSessions = [...state.sessions];
+      const mergedBookStats = { ...state.bookStats };
+      const existingSessionIds = new Set(state.sessions.map((s) => s.id));
+
+      for (const record of records) {
+        if (!record.statsJson) continue;
+        let parsed: { bookStats: BookStatistics; sessions: ReadingSession[] };
+        try {
+          parsed = JSON.parse(record.statsJson);
+        } catch {
+          continue;
+        }
+
+        const cloudSessions: ReadingSession[] = parsed.sessions || [];
+        const cloudBookStats: BookStatistics = parsed.bookStats;
+
+        // Merge sessions: union by id
+        for (const session of cloudSessions) {
+          if (!existingSessionIds.has(session.id)) {
+            mergedSessions.push(session);
+            existingSessionIds.add(session.id);
+          }
+        }
+
+        // Merge bookStats: take newer by lastReadAt
+        const localStats = mergedBookStats[record.bookHash];
+        if (!localStats || (cloudBookStats && cloudBookStats.lastReadAt > localStats.lastReadAt)) {
+          mergedBookStats[record.bookHash] = cloudBookStats;
+        }
+      }
+
+      // Recompute dailySummaries from merged sessions
+      const mergedDailySummaries: Record<string, DailyReadingSummary> = {};
+      for (const session of mergedSessions) {
+        const dateStr = getDateString(session.startTime);
+        const existing = mergedDailySummaries[dateStr];
+        const duration = Math.floor((session.endTime - session.startTime) / 1000);
+        const pagesRead = session.pagesRead || 0;
+        mergedDailySummaries[dateStr] = existing
+          ? {
+              ...existing,
+              totalDuration: existing.totalDuration + duration,
+              totalPages: existing.totalPages + pagesRead,
+              sessionsCount: existing.sessionsCount + 1,
+              booksRead: existing.booksRead.includes(session.bookHash)
+                ? existing.booksRead
+                : [...existing.booksRead, session.bookHash],
+            }
+          : {
+              date: dateStr,
+              totalDuration: duration,
+              totalPages: pagesRead,
+              sessionsCount: 1,
+              booksRead: [session.bookHash],
+            };
+      }
+
+      // Recompute userStats from merged bookStats
+      const allBookStats = Object.values(mergedBookStats);
+      const totalReadingTime = allBookStats.reduce((sum, bs) => sum + bs.totalReadingTime, 0);
+      const totalSessions = allBookStats.reduce((sum, bs) => sum + bs.totalSessions, 0);
+      const totalPagesRead = allBookStats.reduce((sum, bs) => sum + bs.totalPagesRead, 0);
+      const totalBooksCompleted = allBookStats.filter((bs) => bs.completedAt).length;
+      const uniqueBooks = new Set(mergedSessions.map((s) => s.bookHash));
+
+      const newReadingByHour = new Array(24).fill(0) as number[];
+      const newReadingByDayOfWeek = new Array(7).fill(0) as number[];
+      for (const session of mergedSessions) {
+        const hour = getHour(session.startTime);
+        const dayOfWeek = getDayOfWeek(session.startTime);
+        const duration = Math.floor((session.endTime - session.startTime) / 1000);
+        newReadingByHour[hour] = (newReadingByHour[hour] || 0) + duration;
+        newReadingByDayOfWeek[dayOfWeek] = (newReadingByDayOfWeek[dayOfWeek] || 0) + duration;
+      }
+
+      const lastReadDates = allBookStats
+        .filter((bs) => bs.lastReadAt)
+        .map((bs) => getDateString(bs.lastReadAt));
+      const lastReadDate = lastReadDates.length
+        ? lastReadDates.reduce((a, b) => (a > b ? a : b))
+        : state.userStats.lastReadDate;
+
+      return {
+        sessions: mergedSessions,
+        dailySummaries: mergedDailySummaries,
+        bookStats: mergedBookStats,
+        userStats: {
+          ...state.userStats,
+          totalReadingTime,
+          totalSessions,
+          totalPagesRead,
+          totalBooksStarted: uniqueBooks.size,
+          totalBooksCompleted,
+          averageSessionDuration: totalSessions > 0 ? totalReadingTime / totalSessions : 0,
+          lastReadDate,
+          readingByHour: newReadingByHour,
+          readingByDayOfWeek: newReadingByDayOfWeek,
+        },
+      };
+    });
   },
 }));

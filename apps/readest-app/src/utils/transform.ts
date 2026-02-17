@@ -8,7 +8,8 @@ import {
   HighlightStyle,
   ReadingStatus,
 } from '@/types/book';
-import { DBBookConfig, DBBook, DBBookNote } from '@/types/records';
+import { DBBookConfig, DBBook, DBBookNote, DBBookStatistics } from '@/types/records';
+import { BookStatisticsRecord } from '@/libs/sync';
 import { sanitizeString } from './sanitize';
 
 export const transformBookConfigToDB = (
@@ -211,3 +212,30 @@ export const transformBookNoteFromDB = (dbBookNote: DBBookNote): BookNote => {
     deletedAt: deleted_at ? new Date(deleted_at).getTime() : null,
   };
 };
+
+export const transformBookStatisticsToDB = (
+  record: BookStatisticsRecord | Record<string, unknown>,
+  userId: string,
+): DBBookStatistics => {
+  const { bookHash, metaHash, statsJson, updated_at } = record as BookStatisticsRecord;
+  return {
+    user_id: userId,
+    book_hash: bookHash,
+    meta_hash: metaHash,
+    stats_json: statsJson,
+    updated_at: new Date((updated_at as number) ?? Date.now()).toISOString(),
+    deleted_at: null,
+  };
+};
+
+export const transformBookStatisticsFromDB = (db: DBBookStatistics): BookStatisticsRecord => ({
+  id: db.book_hash,
+  book_hash: db.book_hash,
+  bookHash: db.book_hash,
+  meta_hash: db.meta_hash,
+  metaHash: db.meta_hash,
+  user_id: db.user_id,
+  statsJson: db.stats_json,
+  updated_at: db.updated_at ? new Date(db.updated_at).getTime() : null,
+  deleted_at: db.deleted_at ? new Date(db.deleted_at).getTime() : null,
+});

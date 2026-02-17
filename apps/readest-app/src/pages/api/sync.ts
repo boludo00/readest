@@ -11,6 +11,7 @@ import {
   transformBookConfigToDB,
   transformBookNoteToDB,
   transformBookToDB,
+  transformBookStatisticsToDB,
 } from '@/utils/transform';
 import { runMiddleware, corsAllMethods } from '@/utils/cors';
 import { SyncData, SyncRecord, SyncResult, SyncType } from '@/libs/sync';
@@ -21,12 +22,14 @@ const transformsToDB = {
   books: transformBookToDB,
   book_notes: transformBookNoteToDB,
   book_configs: transformBookConfigToDB,
+  book_statistics: transformBookStatisticsToDB,
 };
 
 const DBSyncTypeMap = {
   books: 'books',
   book_notes: 'notes',
   book_configs: 'configs',
+  book_statistics: 'statistics',
 };
 
 type CollectionId = keyof typeof transformsToDB;
@@ -35,6 +38,7 @@ const COLLECTION_IDS: Record<CollectionId, string> = {
   books: COLLECTIONS.BOOKS,
   book_notes: COLLECTIONS.BOOK_NOTES,
   book_configs: COLLECTIONS.BOOK_CONFIGS,
+  book_statistics: COLLECTIONS.BOOK_STATISTICS,
 };
 
 const APPWRITE_META_KEYS = [
@@ -80,11 +84,12 @@ export async function GET(req: NextRequest) {
   const sinceIso = since.toISOString();
 
   try {
-    const results: SyncResult = { books: [], configs: [], notes: [] };
+    const results: SyncResult = { books: [], configs: [], notes: [], statistics: [] };
     const errors: Record<CollectionId, string | null> = {
       books: null,
       book_notes: null,
       book_configs: null,
+      book_statistics: null,
     };
 
     const queryCollection = async (
@@ -195,6 +200,11 @@ export async function GET(req: NextRequest) {
         (err) => (errors['book_notes'] = String(err)),
       );
     }
+    if (!typeParam || typeParam === 'statistics') {
+      await queryCollection('book_statistics', ['book_hash']).catch(
+        (err) => (errors['book_statistics'] = String(err)),
+      );
+    }
 
     const dbErrors = Object.entries(errors).filter(([, err]) => err !== null);
     if (dbErrors.length > 0) {
@@ -224,7 +234,7 @@ export async function POST(req: NextRequest) {
   const { databases } = createAppwriteAdminClient();
   const databaseId = APPWRITE_DATABASE_ID;
   const body = await req.json();
-  const { books = [], configs = [], notes = [] } = body as SyncData;
+  const { books = [], configs = [], notes = [], statistics = [] } = body as SyncData;
 
   const BATCH_SIZE = 100;
 
@@ -317,10 +327,11 @@ export async function POST(req: NextRequest) {
   };
 
   try {
-    const [booksResult, configsResult, notesResult] = await Promise.all([
+    const [booksResult, configsResult, notesResult, statisticsResult] = await Promise.all([
       upsertRecords('books', ['book_hash'], books as BookDataRecord[]),
       upsertRecords('book_configs', ['book_hash'], configs as BookDataRecord[]),
       upsertRecords('book_notes', ['book_hash', 'id'], notes as BookDataRecord[]),
+      upsertRecords('book_statistics', ['book_hash'], statistics as BookDataRecord[]),
     ]);
 
     return NextResponse.json(
@@ -328,6 +339,7 @@ export async function POST(req: NextRequest) {
         books: booksResult?.data || [],
         configs: configsResult?.data || [],
         notes: notesResult?.data || [],
+        statistics: statisticsResult?.data || [],
       },
       { status: 200 },
     );

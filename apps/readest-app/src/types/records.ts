@@ -53,3 +53,13 @@ export interface DBBookNote {
   updated_at?: string;
   deleted_at?: string | null;
 }
+
+export interface DBBookStatistics {
+  $id?: string;
+  user_id: string;
+  book_hash: string;
+  meta_hash?: string;
+  stats_json: string; // JSON: { bookStats: BookStatistics, sessions: ReadingSession[] }
+  updated_at?: string;
+  deleted_at?: string | null;
+}
