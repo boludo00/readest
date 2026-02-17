@@ -29,11 +29,13 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
   const viewState = useReaderStore((state) => state.viewStates[bookKey]);
   const bookData = useBookDataStore((state) => state.booksData[bookId]);
   const progress = useReaderStore((state) => state.viewStates[bookKey]?.progress);
+  const isRsvpPlaying = useReaderStore((state) => state.viewStates[bookKey]?.rsvpPlaying ?? false);
 
   // Subscribe to specific values to ensure re-renders when they change
   const config = useStatisticsStore((state) => state.config);
   const loaded = useStatisticsStore((state) => state.loaded);
-  const { startSession, updateSessionActivity, endSession, saveStatistics } = useStatisticsStore();
+  const { startSession, updateSessionActivity, backfillRsvpPageStats, endSession, saveStatistics } =
+    useStatisticsStore();
   // Statistics sync doesn't need per-book config, so call useSync() without bookKey.
   // Passing bookKey would block lastSyncedAtInited via the config?.location guard,
   // silently preventing statistics sync from running for new books.
@@ -43,6 +45,13 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
 
   // Ref to store Tauri unlisten function
   const unlistenOnFocusChangedRef = useRef<Promise<() => void> | null>(null);
+
+  // Tracks RSVP session boundaries for per-page stat backfill
+  const rsvpSessionRef = useRef<{
+    startTime: number; // Date.now() when RSVP started playing
+    startPage: number; // 1-based page number when RSVP started
+    endTime: number | null; // Date.now() when RSVP stopped (null until then)
+  } | null>(null);
 
   // Start session when the book view is initialized
   useEffect(() => {
@@ -113,7 +122,30 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
     const progressPercent = totalPages > 0 ? currentPage / totalPages : 0;
 
     updateSessionActivity(bookKey, progressPercent, currentPage, cfi);
-  }, [bookKey, config.trackingEnabled, loaded, progress?.pageinfo, updateSessionActivity]);
+
+    // After updating activity, check if this pageinfo change is the post-RSVP navigation
+    const rsvp = rsvpSessionRef.current;
+    if (rsvp && rsvp.endTime !== null) {
+      if (currentPage > rsvp.startPage) {
+        backfillRsvpPageStats(
+          bookKey,
+          rsvp.startPage,
+          currentPage,
+          totalPages,
+          rsvp.startTime,
+          rsvp.endTime,
+        );
+      }
+      rsvpSessionRef.current = null; // Always clear — handles zero-page case too
+    }
+  }, [
+    bookKey,
+    config.trackingEnabled,
+    loaded,
+    progress?.pageinfo,
+    updateSessionActivity,
+    backfillRsvpPageStats,
+  ]);
 
   // Idle timeout handler - reset timer when progress changes
   useEffect(() => {
@@ -122,6 +154,9 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
     // Check for active session using getState()
     const currentActiveSessions = useStatisticsStore.getState().activeSessions;
     if (!currentActiveSessions[bookKey]) return;
+
+    // Don't start the idle timer while RSVP is actively playing words
+    if (isRsvpPlaying) return;
 
     const idleTimer = setTimeout(async () => {
       console.log('[BookSessionTracker] Idle timeout for', bookKey);
@@ -148,7 +183,34 @@ const BookSessionTracker: React.FC<BookSessionTrackerProps> = ({ bookKey }) => {
     syncStatistics,
     envConfig,
     IDLE_TIMEOUT_MS,
+    isRsvpPlaying,
   ]);
+
+  // Track RSVP session start and stop times for per-page stat backfill
+  useEffect(() => {
+    if (!config.trackingEnabled || !loaded) return;
+
+    if (isRsvpPlaying) {
+      // RSVP just started — capture anchor state
+      if (!rsvpSessionRef.current) {
+        const page = (progress?.pageinfo?.current ?? 0) + 1;
+        rsvpSessionRef.current = { startTime: Date.now(), startPage: page, endTime: null };
+      }
+    } else if (rsvpSessionRef.current && rsvpSessionRef.current.endTime === null) {
+      // RSVP just stopped — record end time; page update arrives in the next effect run
+      const endTime = Date.now();
+      const token = { ...rsvpSessionRef.current, endTime };
+      rsvpSessionRef.current = token;
+      // Safety: if view.goTo() never fires a pageinfo change (same-page stop),
+      // clear the ref after 3 s to avoid stale state on the next page turn.
+      setTimeout(() => {
+        if (rsvpSessionRef.current === token || rsvpSessionRef.current?.endTime === endTime) {
+          rsvpSessionRef.current = null;
+        }
+      }, 3000);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRsvpPlaying, config.trackingEnabled, loaded]);
 
   // Handle app losing/gaining focus (visibility change for web, focus change for Tauri)
   useEffect(() => {

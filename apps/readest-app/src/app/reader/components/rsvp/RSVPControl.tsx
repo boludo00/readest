@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom';
 import { useReaderStore } from '@/store/readerStore';
 import { useBookDataStore } from '@/store/bookDataStore';
 import { useThemeStore } from '@/store/themeStore';
-import { RSVPController, RsvpStartChoice, RsvpStopPosition } from '@/services/rsvp';
+import { RSVPController, RsvpStartChoice, RsvpState, RsvpStopPosition } from '@/services/rsvp';
 import { eventDispatcher } from '@/utils/event';
 import { useTranslation } from '@/hooks/useTranslation';
 import { BookNote } from '@/types/book';
@@ -108,6 +108,7 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
     getProgress,
     getViewSettings: _getViewSettings,
     setProgress: _setProgress,
+    setRsvpPlaying,
   } = useReaderStore();
   const { getBookData } = useBookDataStore();
   const { themeCode } = useThemeStore();
@@ -145,6 +146,13 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Clear rsvpPlaying flag in store when component unmounts (e.g. book closed while playing)
+  useEffect(() => {
+    return () => {
+      setRsvpPlaying(bookKey, false);
+    };
+  }, [bookKey, setRsvpPlaying]);
 
   // Listen for RSVP start events
   useEffect(() => {
@@ -224,6 +232,10 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
       };
 
       controller.addEventListener('rsvp-start-choice', handleStartChoice);
+      controller.addEventListener('rsvp-state-change', (e: Event) => {
+        const { playing } = (e as CustomEvent<RsvpState>).detail;
+        setRsvpPlaying(bookKey, playing);
+      });
       controller.requestStart(selectionText);
 
       // Clean up listener after handling
@@ -231,7 +243,7 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
         controller.removeEventListener('rsvp-start-choice', handleStartChoice);
       }, 100);
     },
-    [_, bookKey, getBookData, getProgress, getView, removeRsvpHighlight],
+    [_, bookKey, getBookData, getProgress, getView, removeRsvpHighlight, setRsvpPlaying],
   );
 
   const handleStartDialogSelect = useCallback(
@@ -381,9 +393,10 @@ const RSVPControl: React.FC<RSVPControlProps> = ({ bookKey, gridInsets }) => {
       controller.stop();
     }
 
+    setRsvpPlaying(bookKey, false);
     setIsActive(false);
     setShowStartDialog(false);
-  }, [bookKey, getView, removeRsvpHighlight, themeCode.primary]);
+  }, [bookKey, getView, removeRsvpHighlight, setRsvpPlaying, themeCode.primary]);
 
   const handleChapterSelect = useCallback(
     (href: string) => {

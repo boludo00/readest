@@ -341,6 +341,7 @@ export function useSync(bookKey?: string) {
     syncBooks,
     syncConfigs,
     syncNotes,
+    syncingStatistics,
     syncStatistics,
   };
 }

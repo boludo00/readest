@@ -6,22 +6,22 @@ Readest is an open-source, cross-platform ebook reader designed for immersive re
 
 ## Tech Stack
 
-| Layer            | Technology            | Version   | Purpose                              |
-| ---------------- | --------------------- | --------- | ------------------------------------ |
-| Runtime          | Node.js               | 22.x      | JavaScript runtime                   |
-| Package Manager  | pnpm                  | 10.x      | Monorepo package management          |
-| Framework        | Next.js               | 16.x      | React framework with SSG/SSR         |
-| UI Library       | React                 | 19.x      | Component framework                  |
-| Desktop/Mobile   | Tauri                 | 2.x       | Cross-platform native wrapper        |
-| Language         | TypeScript            | 5.x       | Strict mode enabled                  |
-| Backend Language | Rust                  | 1.77+     | Tauri backend and plugins            |
-| State            | Zustand               | 5.x       | Lightweight state management         |
-| Styling          | Tailwind CSS          | 3.x       | Utility-first CSS                    |
-| UI Components    | Radix UI + DaisyUI    | -         | Accessible primitives + themes       |
-| Auth & Database  | Appwrite              | 22.x      | Authentication, database, cloud sync |
-| Testing          | Vitest                | 4.x       | Unit testing                         |
-| Linting          | ESLint + Prettier     | 9.x / 3.x | Code quality and formatting          |
-| Deployment       | Cloudflare (OpenNext) | -         | Web app hosting                      |
+| Layer            | Technology         | Version   | Purpose                              |
+| ---------------- | ------------------ | --------- | ------------------------------------ |
+| Runtime          | Node.js            | 22.x      | JavaScript runtime                   |
+| Package Manager  | pnpm               | 10.x      | Monorepo package management          |
+| Framework        | Next.js            | 16.x      | React framework with SSG/SSR         |
+| UI Library       | React              | 19.x      | Component framework                  |
+| Desktop/Mobile   | Tauri              | 2.x       | Cross-platform native wrapper        |
+| Language         | TypeScript         | 5.x       | Strict mode enabled                  |
+| Backend Language | Rust               | 1.77+     | Tauri backend and plugins            |
+| State            | Zustand            | 5.x       | Lightweight state management         |
+| Styling          | Tailwind CSS       | 3.x       | Utility-first CSS                    |
+| UI Components    | Radix UI + DaisyUI | -         | Accessible primitives + themes       |
+| Auth & Database  | Appwrite           | 22.x      | Authentication, database, cloud sync |
+| Testing          | Vitest             | 4.x       | Unit testing                         |
+| Linting          | ESLint + Prettier  | 9.x / 3.x | Code quality and formatting          |
+| Deployment       | Railway            | -         | Web app hosting (Next.js monolith)   |
 
 ### Key Dependencies
 
@@ -136,7 +136,7 @@ User Input → React Components → Zustand Stores → Services → Tauri Backen
 The app uses `NEXT_PUBLIC_APP_PLATFORM` to determine the runtime:
 
 - `tauri`: Desktop/mobile app with native Tauri APIs (SSG export)
-- `web`: Web browser with PWA support (SSR via Cloudflare)
+- `web`: Web browser with PWA support (SSR via Railway)
 
 ### Key Architectural Decisions
 
@@ -149,6 +149,21 @@ The app uses `NEXT_PUBLIC_APP_PLATFORM` to determine the runtime:
 - **Hybrid API routing**: App Router (`src/app/api/`) for AI, TTS, payments; Pages Router (`src/pages/api/`) for sync, DeepL, storage
 - **PWA** via Serwist (web platform only)
 - **Multi-provider AI**: Ollama (local), AI Gateway, OpenAI, Anthropic, Google Gemini, OpenAI-compatible (OpenRouter, Groq, etc.)
+- **Railway** serves dual purpose: hosts the web app for browser users AND acts as the API backend for Tauri (desktop/mobile) users. The Tauri app calls Railway for operations requiring server-side secrets (AI, TTS, storage, sync, payments). `NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_NODE_BASE_URL` are baked into the Tauri binary at build time via `.env.tauri` — pointing to the wrong URL causes all sync to fail silently.
+
+### Deployment Architecture
+
+```
+Browser users  ──→ Railway (serves web UI + handles API routes)
+                         │
+Tauri app      ──→ Railway /api/sync        (books, notes, configs, statistics sync)
+               ──→ Railway /api/ai/chat     (AI, needs server-side API keys)
+               ──→ Railway /api/tts/edge    (TTS proxy)
+               ──→ Railway /api/storage/*   (S3/R2, needs server-side credentials)
+               ──→ Appwrite (direct)        (auth, JWT validation)
+```
+
+`NEXT_PUBLIC_*` variables are resolved at `next build` time and inlined into the JS bundle. Changing them requires a rebuild — not just a redeploy.
 
 ### Key Modules
 
@@ -318,10 +333,10 @@ Examples:
 
 ### Deployment
 
-| Command                                      | Description                    |
-| -------------------------------------------- | ------------------------------ |
-| `pnpm --filter @readest/readest-app preview` | Preview OpenNext build locally |
-| `pnpm --filter @readest/readest-app deploy`  | Deploy to Cloudflare           |
+| Command                                        | Description                      |
+| ---------------------------------------------- | -------------------------------- |
+| `pnpm --filter @readest/readest-app build-web` | Build web app for Railway deploy |
+| `pnpm --filter @readest/readest-app start-web` | Start production Next.js server  |
 
 ### Quality Checks
 
@@ -335,33 +350,34 @@ Examples:
 
 Copy `apps/readest-app/.env.local.example` to `.env.local` and configure:
 
-| Variable                          | Required | Description                                                 |
-| --------------------------------- | -------- | ----------------------------------------------------------- |
-| `NEXT_PUBLIC_APP_PLATFORM`        | Yes      | `tauri` or `web`                                            |
-| `NEXT_PUBLIC_APPWRITE_ENDPOINT`   | Yes      | Appwrite endpoint (default: `https://cloud.appwrite.io/v1`) |
-| `NEXT_PUBLIC_APPWRITE_PROJECT_ID` | Yes      | Appwrite project ID                                         |
-| `APPWRITE_API_KEY`                | Yes      | Appwrite server API key (server-side only)                  |
-| `APPWRITE_DATABASE_ID`            | Yes      | Appwrite database ID                                        |
-| `NEXT_PUBLIC_APPWRITE_DEV_KEY`    | No       | Dev key for localhost CORS bypass                           |
-| `NEXT_PUBLIC_API_BASE_URL`        | Yes      | Backend API base URL                                        |
-| `NEXT_PUBLIC_POSTHOG_KEY`         | No       | PostHog analytics key                                       |
-| `NEXT_PUBLIC_STORAGE_FIXED_QUOTA` | No       | Fixed storage quota in bytes                                |
-| `DEEPL_PRO_API_KEYS`              | No       | DeepL Pro API keys (comma-separated)                        |
-| `DEEPL_FREE_API_KEYS`             | No       | DeepL Free API keys                                         |
-| `NEXT_PUBLIC_OBJECT_STORAGE_TYPE` | No       | `r2` or `s3` for cloud storage                              |
-| `R2_ACCESS_KEY_ID`                | No       | Cloudflare R2 access key                                    |
-| `R2_SECRET_ACCESS_KEY`            | No       | Cloudflare R2 secret key                                    |
-| `R2_BUCKET_NAME`                  | No       | Cloudflare R2 bucket name                                   |
-| `S3_ENDPOINT`                     | No       | S3-compatible endpoint URL                                  |
-| `S3_ACCESS_KEY_ID`                | No       | S3 access key                                               |
-| `S3_SECRET_ACCESS_KEY`            | No       | S3 secret key                                               |
-| `S3_BUCKET_NAME`                  | No       | S3 bucket name                                              |
-| `AI_GATEWAY_API_KEY`              | No       | AI gateway API key                                          |
+| Variable                          | Required | Description                                                                                                                                                                                       |
+| --------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_APP_PLATFORM`        | Yes      | `tauri` or `web`                                                                                                                                                                                  |
+| `NEXT_PUBLIC_APPWRITE_ENDPOINT`   | Yes      | Appwrite endpoint (default: `https://cloud.appwrite.io/v1`)                                                                                                                                       |
+| `NEXT_PUBLIC_APPWRITE_PROJECT_ID` | Yes      | Appwrite project ID                                                                                                                                                                               |
+| `APPWRITE_API_KEY`                | Yes      | Appwrite server API key (server-side only)                                                                                                                                                        |
+| `APPWRITE_DATABASE_ID`            | Yes      | Appwrite database ID                                                                                                                                                                              |
+| `NEXT_PUBLIC_APPWRITE_DEV_KEY`    | No       | Dev key for localhost CORS bypass                                                                                                                                                                 |
+| `NEXT_PUBLIC_API_BASE_URL`        | Yes      | Railway URL — baked at build time into Tauri binary and web bundle. Defaults to `https://web.readest.com` if unset. Must match your Railway deployment URL or all API calls hit the wrong server. |
+| `NEXT_PUBLIC_NODE_BASE_URL`       | Yes      | Same as `NEXT_PUBLIC_API_BASE_URL` for Pages Router routes. Set both to your Railway URL.                                                                                                         |
+| `NEXT_PUBLIC_POSTHOG_KEY`         | No       | PostHog analytics key                                                                                                                                                                             |
+| `NEXT_PUBLIC_STORAGE_FIXED_QUOTA` | No       | Fixed storage quota in bytes                                                                                                                                                                      |
+| `DEEPL_PRO_API_KEYS`              | No       | DeepL Pro API keys (comma-separated)                                                                                                                                                              |
+| `DEEPL_FREE_API_KEYS`             | No       | DeepL Free API keys                                                                                                                                                                               |
+| `NEXT_PUBLIC_OBJECT_STORAGE_TYPE` | No       | `r2` or `s3` for cloud storage                                                                                                                                                                    |
+| `R2_ACCESS_KEY_ID`                | No       | Cloudflare R2 access key                                                                                                                                                                          |
+| `R2_SECRET_ACCESS_KEY`            | No       | Cloudflare R2 secret key                                                                                                                                                                          |
+| `R2_BUCKET_NAME`                  | No       | Cloudflare R2 bucket name                                                                                                                                                                         |
+| `S3_ENDPOINT`                     | No       | S3-compatible endpoint URL                                                                                                                                                                        |
+| `S3_ACCESS_KEY_ID`                | No       | S3 access key                                                                                                                                                                                     |
+| `S3_SECRET_ACCESS_KEY`            | No       | S3 secret key                                                                                                                                                                                     |
+| `S3_BUCKET_NAME`                  | No       | S3 bucket name                                                                                                                                                                                    |
+| `AI_GATEWAY_API_KEY`              | No       | AI gateway API key                                                                                                                                                                                |
 
 ### Environment Files
 
-- `.env.tauri` - Tauri desktop app variables
-- `.env.web` - Web app variables
+- `.env.tauri` - Tauri desktop/mobile build variables. **Must** include `NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_NODE_BASE_URL` pointing to your Railway deployment — these are baked into the binary at build time. Missing or wrong values cause sync and all API calls to hit the upstream `web.readest.com` server instead of your own.
+- `.env.web` - Web app variables (used by Railway build)
 - `.env.test.local` - Test environment variables
 - `.env.local` - Local overrides (gitignored)
 
@@ -400,13 +416,25 @@ src/__tests__/
 
 ## Deployment
 
-### Web (Cloudflare)
+### Web (Railway)
+
+The web app deploys as a single Next.js monolith on Railway. Configuration is in `apps/readest-app/railway.json`.
+
+Railway builds with:
 
 ```bash
-pnpm --filter @readest/readest-app deploy
+pnpm --filter @readest/readest-app build-web
 ```
 
-Uses OpenNext for Cloudflare Workers deployment.
+and starts with:
+
+```bash
+cd apps/readest-app && pnpm start-web
+```
+
+A root `Dockerfile` is also available for Docker-based Railway deploys.
+
+**Required Railway environment variables:** `NEXT_PUBLIC_APP_PLATFORM=web`, `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_NODE_BASE_URL`, and all Appwrite/storage variables listed in the Environment Variables section.
 
 ### Desktop
 
@@ -503,9 +531,17 @@ git submodule update --init     # Update submodules
 **Appwrite CORS errors in web dev mode:**
 The Next.js dev server proxies `/appwrite/*` to the Appwrite endpoint (configured in `next.config.mjs`). Ensure `NEXT_PUBLIC_APPWRITE_ENDPOINT` is set, or create a dev key in Appwrite Console and set `NEXT_PUBLIC_APPWRITE_DEV_KEY`.
 
+**Red cloud/sync icon on Tauri app (mobile/desktop):**
+The Tauri binary was built without `NEXT_PUBLIC_API_BASE_URL` set in `.env.tauri`, so it falls back to `https://web.readest.com` (the upstream fork's server). That server rejects your Appwrite JWTs (wrong project). Fix: add `NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_NODE_BASE_URL` to `.env.tauri` pointing to your Railway URL, then **rebuild** the app. A redeploy alone is not enough — the value is baked at build time.
+
 ## Steps after every code change
 
-After every code change I would like you to please make sure the CI/CD steps run successfully. Specifically, the run format check.
+After every code change I would like you to please make sure the CI/CD steps run successfully. Specifically:
+
+1. Run the format check: `pnpm format:check`
+2. After significant codebase changes (new files, modified types, refactors, or anything that could affect TypeScript types), also run the TypeScript type check: `pnpm --filter @readest/readest-app exec tsc --noEmit`
+
+Fix any errors before considering the task complete.
 
 ## Skill Usage Guide
 

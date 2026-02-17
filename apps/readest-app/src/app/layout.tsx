@@ -4,7 +4,7 @@ import Providers from '@/components/Providers';
 
 import '../styles/globals.css';
 
-const url = 'https://web.readest.com/';
+const url = 'https://loyal-stillness-production.up.railway.app/';
 const title = 'Readest — Where You Read, Digest and Get Insight';
 const description =
   'Discover Readest, the ultimate online ebook reader for immersive and organized reading. ' +
@@ -65,7 +65,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <meta property='og:description' content={description} />
         <meta property='og:image' content={previewImage} />
         <meta name='twitter:card' content='summary_large_image' />
-        <meta property='twitter:domain' content='web.readest.com' />
+        <meta property='twitter:domain' content='loyal-stillness-production.up.railway.app' />
         <meta property='twitter:url' content={url} />
         <meta name='twitter:title' content={title} />
         <meta name='twitter:description' content={description} />

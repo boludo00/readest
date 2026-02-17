@@ -282,6 +282,7 @@ export async function POST(req: NextRequest) {
           dbRec.updated_at = new Date().toISOString();
           // Remove $id from the record before creating
           const { $id: _, ...createData } = dbRec as DBBook & { $id?: string };
+          console.log(`[Sync] INSERT ${collection}`, { book_hash: dbRec['book_hash'] });
           const created = await databases.createDocument(
             databaseId,
             COLLECTION_IDS[collection]!,
@@ -301,6 +302,14 @@ export async function POST(req: NextRequest) {
             : 0;
           const clientIsNewer =
             clientDeletedAt > serverDeletedAt || clientUpdatedAt > serverUpdatedAt;
+
+          console.log(`[Sync] UPSERT ${collection}`, {
+            book_hash: dbRec['book_hash'],
+            clientUpdatedAt: new Date(clientUpdatedAt).toISOString(),
+            serverUpdatedAt: new Date(serverUpdatedAt).toISOString(),
+            clientIsNewer,
+            action: clientIsNewer ? 'UPDATE' : 'SKIP (server is newer)',
+          });
 
           if (clientIsNewer) {
             // Update existing document

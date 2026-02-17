@@ -34,6 +34,7 @@ interface ViewState {
   progress: BookProgress | null;
   ribbonVisible: boolean;
   ttsEnabled: boolean;
+  rsvpPlaying: boolean;
   syncing: boolean;
   gridInsets: Insets | null;
   /* View settings for the view: 
@@ -51,6 +52,7 @@ interface ReaderStore {
   setHoveredBookKey: (key: string | null) => void;
   setBookmarkRibbonVisibility: (key: string, visible: boolean) => void;
   setTTSEnabled: (key: string, enabled: boolean) => void;
+  setRsvpPlaying: (key: string, playing: boolean) => void;
   setIsSyncing: (key: string, syncing: boolean) => void;
   setProgress: (
     key: string,
@@ -137,6 +139,7 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
           progress: null,
           ribbonVisible: false,
           ttsEnabled: false,
+          rsvpPlaying: false,
           syncing: false,
           gridInsets: null,
           viewSettings: null,
@@ -218,6 +221,7 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
             progress: null,
             ribbonVisible: false,
             ttsEnabled: false,
+            rsvpPlaying: false,
             syncing: false,
             gridInsets: null,
             viewSettings: { ...globalViewSettings, ...configViewSettings },
@@ -241,6 +245,7 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
             progress: null,
             ribbonVisible: false,
             ttsEnabled: false,
+            rsvpPlaying: false,
             syncing: false,
             gridInsets: null,
             viewSettings: null,
@@ -389,6 +394,16 @@ export const useReaderStore = create<ReaderStore>((set, get) => ({
           ...state.viewStates[key]!,
           ttsEnabled: enabled,
         },
+      },
+    })),
+
+  setRsvpPlaying: (key: string, playing: boolean) =>
+    set((state) => ({
+      viewStates: {
+        ...state.viewStates,
+        [key]: state.viewStates[key]
+          ? { ...state.viewStates[key]!, rsvpPlaying: playing }
+          : state.viewStates[key]!,
       },
     })),
 

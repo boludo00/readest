@@ -85,6 +85,14 @@ interface StatisticsStore {
     cfi?: string,
   ) => void;
   updateSessionActivity: (bookKey: string, progress: number, page: number, cfi?: string) => void;
+  backfillRsvpPageStats: (
+    bookKey: string,
+    startPage: number,
+    endPage: number,
+    totalPages: number,
+    rsvpStartMs: number,
+    rsvpEndMs: number,
+  ) => void;
   endSession: (bookKey: string, reason: 'closed' | 'idle' | 'switched') => ReadingSession | null;
   endAllSessions: () => void;
 
@@ -235,6 +243,55 @@ export const useStatisticsStore = create<StatisticsStore>((set, get) => ({
       }));
     }
   },
+
+  backfillRsvpPageStats: (bookKey, startPage, endPage, totalPages, rsvpStartMs, rsvpEndMs) =>
+    set((state) => {
+      const session = state.activeSessions[bookKey];
+      if (!session) return state;
+
+      const pagesRead = endPage - startPage;
+      if (pagesRead <= 0) return state;
+
+      const totalDurationSec = Math.max(1, Math.floor((rsvpEndMs - rsvpStartMs) / 1000));
+      const secPerPage = totalDurationSec / pagesRead;
+      const rsvpStartSec = Math.floor(rsvpStartMs / 1000);
+      const minDuration = state.config.minimumPageSeconds ?? 5;
+
+      const syntheticStats: PageReadingStat[] = [];
+      for (let i = 0; i < pagesRead; i++) {
+        const page = startPage + i;
+        const startTime = rsvpStartSec + Math.floor(i * secPerPage);
+        // Last page absorbs any integer rounding remainder
+        const duration =
+          i === pagesRead - 1
+            ? totalDurationSec - Math.floor((pagesRead - 1) * secPerPage)
+            : Math.floor(secPerPage);
+        // Apply minimumPageSeconds but NOT maximumPageSeconds —
+        // RSVP time is known-accurate active reading, not idle time.
+        if (duration >= minDuration) {
+          syntheticStats.push({
+            bookHash: session.bookHash,
+            page,
+            startTime,
+            duration,
+            totalPages,
+          });
+        }
+      }
+
+      // Remove any stats updateSessionActivity already wrote for pages in this range
+      // (it creates one stat for startPage with the entire RSVP duration, which we replace)
+      const existingStats = session.pageStats.filter(
+        (s) => s.page < startPage || s.page >= endPage,
+      );
+
+      return {
+        activeSessions: {
+          ...state.activeSessions,
+          [bookKey]: { ...session, pageStats: [...existingStats, ...syntheticStats] },
+        },
+      };
+    }),
 
   endSession: (bookKey, reason) => {
     const { activeSessions, config, dailySummaries, bookStats } = get();

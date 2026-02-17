@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 const allowedOrigins = [
-  'https://web.readest.com',
+  'https://loyal-stillness-production.up.railway.app',
   'https://tauri.localhost',
   'http://tauri.localhost',
   'http://localhost:3000',

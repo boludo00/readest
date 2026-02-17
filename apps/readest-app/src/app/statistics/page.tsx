@@ -79,7 +79,8 @@ const StatisticsPage = () => {
   }, [syncingStatistics, syncError]);
 
   const handleSync = useCallback(async () => {
-    await syncStatistics(undefined, 'both');
+    const allStats = useStatisticsStore.getState().getStatsForSync();
+    await syncStatistics(allStats.length ? allStats : undefined, 'both');
   }, [syncStatistics]);
 
   usePullToRefresh(containerRef, handleSync);
