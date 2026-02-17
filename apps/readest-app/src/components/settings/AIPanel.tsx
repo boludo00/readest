@@ -149,6 +149,12 @@ const AIPanel: React.FC = () => {
     aiSettings.recapDetailLevel ?? 'normal',
   );
 
+  // Per-feature model overrides
+  const [perFeatureModels, setPerFeatureModels] = useState(aiSettings.perFeatureModels ?? false);
+  const [xrayModelOverride, setXrayModelOverride] = useState(aiSettings.xrayModelOverride ?? '');
+  const [recapModelOverride, setRecapModelOverride] = useState(aiSettings.recapModelOverride ?? '');
+  const [chatModelOverride, setChatModelOverride] = useState(aiSettings.chatModelOverride ?? '');
+
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('idle');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -156,9 +162,10 @@ const AIPanel: React.FC = () => {
   const gatewayModelOptions = getGatewayModelOptions();
 
   const localChangeRef = useRef(false);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const saveAiSetting = useCallback(
-    async (key: keyof AISettings, value: AISettings[keyof AISettings]) => {
+    (key: keyof AISettings, value: AISettings[keyof AISettings]) => {
       const currentSettings = useSettingsStore.getState().settings;
       if (!currentSettings) return;
       const currentAiSettings: AISettings = currentSettings.aiSettings ?? DEFAULT_AI_SETTINGS;
@@ -167,10 +174,31 @@ const AIPanel: React.FC = () => {
 
       localChangeRef.current = true;
       setSettings(newSettings);
-      await saveSettings(envConfig, newSettings);
+
+      // Debounce disk writes — prevents race when multiple fields change quickly
+      // (e.g. switching provider then typing an API key fires two concurrent writes;
+      // whichever finishes last wins and may overwrite the other's change)
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => {
+        saveTimerRef.current = null;
+        const latest = useSettingsStore.getState().settings;
+        saveSettings(envConfig, latest);
+      }, 300);
     },
     [envConfig, setSettings, saveSettings],
   );
+
+  // Flush any pending debounced save on unmount so settings are never lost
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        saveSettings(envConfig, useSettingsStore.getState().settings);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [envConfig, saveSettings]);
 
   const fetchOllamaModels = useCallback(async () => {
     if (!ollamaUrl || !enabled) return;
@@ -234,6 +262,10 @@ const AIPanel: React.FC = () => {
     setRecapEnabled(aiSettings.recapEnabled ?? true);
     setRecapMaxChapters(aiSettings.recapMaxChapters ?? 0);
     setRecapDetailLevel(aiSettings.recapDetailLevel ?? 'normal');
+    setPerFeatureModels(aiSettings.perFeatureModels ?? false);
+    setXrayModelOverride(aiSettings.xrayModelOverride ?? '');
+    setRecapModelOverride(aiSettings.recapModelOverride ?? '');
+    setChatModelOverride(aiSettings.chatModelOverride ?? '');
     const newSavedCustom = aiSettings.aiGatewayCustomModel ?? '';
     const newIsCustom = newSavedCustom.length > 0;
     setSelectedGatewayModel(
@@ -391,6 +423,34 @@ const AIPanel: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recapDetailLevel]);
 
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (perFeatureModels !== (aiSettings.perFeatureModels ?? false))
+      saveAiSetting('perFeatureModels', perFeatureModels);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perFeatureModels]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (xrayModelOverride !== (aiSettings.xrayModelOverride ?? ''))
+      saveAiSetting('xrayModelOverride', xrayModelOverride);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [xrayModelOverride]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (recapModelOverride !== (aiSettings.recapModelOverride ?? ''))
+      saveAiSetting('recapModelOverride', recapModelOverride);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recapModelOverride]);
+
+  useEffect(() => {
+    if (!isMounted.current) return;
+    if (chatModelOverride !== (aiSettings.chatModelOverride ?? ''))
+      saveAiSetting('chatModelOverride', chatModelOverride);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatModelOverride]);
+
   // Gateway model selection
   const getEffectiveGatewayModelId = useCallback(() => {
     if (selectedGatewayModel === CUSTOM_MODEL_VALUE && customModelStatus === 'valid') {
@@ -520,6 +580,26 @@ const AIPanel: React.FC = () => {
   };
 
   const disabledSection = !enabled ? 'opacity-50 pointer-events-none select-none' : '';
+
+  // Build model options for current provider (used by per-feature overrides)
+  const getModelOptionsForProvider = useCallback((): { id: string; label: string }[] => {
+    switch (provider) {
+      case 'ollama':
+        return ollamaModels.map((m) => ({ id: m, label: m }));
+      case 'ai-gateway':
+        return gatewayModelOptions.map((m) => ({ id: m.id, label: m.label }));
+      case 'openai':
+        return OPENAI_MODELS.map((m) => ({ id: m.id, label: m.label }));
+      case 'anthropic':
+        return ANTHROPIC_MODELS.map((m) => ({ id: m.id, label: m.label }));
+      case 'google':
+        return GOOGLE_MODELS.map((m) => ({ id: m.id, label: m.label }));
+      case 'openai-compatible':
+        return compatModel ? [{ id: compatModel, label: compatModel }] : [];
+      default:
+        return [];
+    }
+  }, [provider, ollamaModels, gatewayModelOptions, compatModel]);
 
   const renderNoEmbeddingsNote = () => (
     <div className='config-item !h-auto py-3'>
@@ -1021,6 +1101,107 @@ const AIPanel: React.FC = () => {
                     <option value='brief'>{_('Brief')}</option>
                     <option value='normal'>{_('Normal')}</option>
                     <option value='detailed'>{_('Detailed')}</option>
+                  </select>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className={clsx('w-full', disabledSection)}>
+        <h2 className='mb-2 font-medium'>{_('Model Routing')}</h2>
+        <p className='text-base-content/70 mb-3 text-sm'>
+          {_(
+            'Assign different models to each feature. Use a faster model for chat and a stronger model for entity extraction.',
+          )}
+        </p>
+        <div className='card border-base-200 bg-base-100 border shadow'>
+          <div className='divide-base-200 divide-y'>
+            <div className='config-item'>
+              <div>
+                <span>{_('Per-feature models')}</span>
+                <p className='text-base-content/60 text-xs'>
+                  {_('Use different models for X-Ray, Recap, and Chat')}
+                </p>
+              </div>
+              <input
+                type='checkbox'
+                className='toggle'
+                checked={perFeatureModels}
+                onChange={() => setPerFeatureModels(!perFeatureModels)}
+                disabled={!enabled}
+              />
+            </div>
+            {perFeatureModels && (
+              <>
+                <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                  <div>
+                    <span>{_('X-Ray Model')}</span>
+                    <p className='text-base-content/60 text-xs'>
+                      {_(
+                        'Entity extraction needs strong reasoning. Recommended: Sonnet, GPT-4.1, Gemini Pro.',
+                      )}
+                    </p>
+                  </div>
+                  <select
+                    className='select select-bordered select-sm bg-base-100 text-base-content w-full'
+                    value={xrayModelOverride}
+                    onChange={(e) => setXrayModelOverride(e.target.value)}
+                    disabled={!enabled}
+                  >
+                    <option value=''>{_('Same as main model')}</option>
+                    {getModelOptionsForProvider().map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                  <div>
+                    <span>{_('Recap Model')}</span>
+                    <p className='text-base-content/60 text-xs'>
+                      {_(
+                        'Summarization benefits from a balanced model. Recommended: Sonnet, GPT-4.1 Mini, Flash.',
+                      )}
+                    </p>
+                  </div>
+                  <select
+                    className='select select-bordered select-sm bg-base-100 text-base-content w-full'
+                    value={recapModelOverride}
+                    onChange={(e) => setRecapModelOverride(e.target.value)}
+                    disabled={!enabled}
+                  >
+                    <option value=''>{_('Same as main model')}</option>
+                    {getModelOptionsForProvider().map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className='config-item !h-auto flex-col !items-start gap-2 py-3'>
+                  <div>
+                    <span>{_('Chat Model')}</span>
+                    <p className='text-base-content/60 text-xs'>
+                      {_(
+                        'Conversational Q&A works well with fast, cheap models. Recommended: Haiku, Nano, Flash Lite.',
+                      )}
+                    </p>
+                  </div>
+                  <select
+                    className='select select-bordered select-sm bg-base-100 text-base-content w-full'
+                    value={chatModelOverride}
+                    onChange={(e) => setChatModelOverride(e.target.value)}
+                    disabled={!enabled}
+                  >
+                    <option value=''>{_('Same as main model')}</option>
+                    {getModelOptionsForProvider().map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </>
