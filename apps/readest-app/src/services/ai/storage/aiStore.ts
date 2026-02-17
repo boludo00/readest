@@ -9,6 +9,7 @@ import {
   BookRecap,
 } from '../types';
 import { aiLogger } from '../logger';
+import { useXRayStore } from '@/store/xrayStore';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const lunr = require('lunr') as typeof import('lunr');
@@ -697,6 +698,126 @@ class AIStore {
         reject(tx.error);
       };
     });
+  }
+
+  // --- Cloud sync methods ---
+
+  async uploadEntities(bookHash: string, token: string): Promise<void> {
+    try {
+      useXRayStore.setState({ syncStatus: 'uploading' });
+
+      const [entities, entityIndex] = await Promise.all([
+        this.getEntities(bookHash),
+        this.getEntityIndex(bookHash),
+      ]);
+
+      if (entities.length === 0 || !entityIndex) {
+        throw new Error('No X-Ray data to upload');
+      }
+
+      const response = await fetch('/api/xray/upload', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          bookHash,
+          entities,
+          entityIndex,
+        }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Upload failed');
+      }
+
+      useXRayStore.setState({ syncStatus: 'synced' });
+      console.log(`[AI] Uploaded ${entities.length} entities for ${bookHash} to cloud`);
+    } catch (error: any) {
+      useXRayStore.setState({ syncStatus: 'error' });
+      aiLogger.store.error('uploadEntities', error.message || 'Upload failed');
+      throw error;
+    }
+  }
+
+  async downloadEntities(bookHash: string, token: string): Promise<boolean> {
+    try {
+      const response = await fetch(`/api/xray/download?bookHash=${encodeURIComponent(bookHash)}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (response.status === 404) {
+        // No cloud data exists for this book
+        useXRayStore.setState({ syncStatus: 'local' });
+        return false;
+      }
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Download failed');
+      }
+
+      const data = await response.json();
+
+      // Save to IndexedDB
+      await Promise.all([
+        this.saveEntities(data.entities as BookEntity[]),
+        this.saveEntityIndex(data.entityIndex as BookEntityIndex),
+      ]);
+
+      useXRayStore.setState({ syncStatus: 'synced' });
+      console.log(`[AI] Downloaded ${data.entities.length} entities for ${bookHash} from cloud`);
+      return true;
+    } catch (error: any) {
+      useXRayStore.setState({ syncStatus: 'error' });
+      aiLogger.store.error('downloadEntities', error.message || 'Download failed');
+      throw error;
+    }
+  }
+
+  async deleteCloudEntities(bookHash: string, token: string): Promise<void> {
+    try {
+      const response = await fetch(`/api/xray/delete?bookHash=${encodeURIComponent(bookHash)}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Delete failed');
+      }
+
+      console.log(`[AI] Deleted cloud X-Ray data for ${bookHash}`);
+    } catch (error: any) {
+      aiLogger.store.error('deleteCloudEntities', error.message || 'Delete failed');
+      throw error;
+    }
+  }
+
+  async syncEntities(bookHash: string, token: string): Promise<'uploaded' | 'downloaded' | 'none'> {
+    try {
+      // Check if we have local data
+      const hasLocal = await this.isEntityIndexed(bookHash);
+
+      if (!hasLocal) {
+        // Try to download from cloud
+        const downloaded = await this.downloadEntities(bookHash, token);
+        return downloaded ? 'downloaded' : 'none';
+      }
+
+      // We have local data - upload it
+      await this.uploadEntities(bookHash, token);
+      return 'uploaded';
+    } catch (error: any) {
+      aiLogger.store.error('syncEntities', error.message || 'Sync failed');
+      throw error;
+    }
   }
 }
 

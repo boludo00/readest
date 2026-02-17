@@ -7,6 +7,7 @@ import {
   getApiKeyForProvider,
   getModelForProvider,
   getAIConfigError,
+  getSettingsForFeature,
 } from './utils/providerHelpers';
 import { getModelForPlatform } from './utils/iosModelFactory';
 import type { AISettings, BookRecap, TextChunk } from './types';
@@ -155,11 +156,12 @@ export async function generateRecap(
   authorName: string,
   currentPage: number,
   totalPages: number,
-  settings: AISettings,
+  rawSettings: AISettings,
   highlights?: string[],
   abortSignal?: AbortSignal,
   forceRefresh?: boolean,
 ): Promise<BookRecap> {
+  const settings = getSettingsForFeature(rawSettings, 'recap');
   // Validate provider configuration before making any API calls
   const configError = getAIConfigError(settings);
   if (configError) {

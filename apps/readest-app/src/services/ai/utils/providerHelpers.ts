@@ -1,4 +1,4 @@
-import type { AISettings, AIProviderName } from '../types';
+import type { AISettings, AIProviderName, AIFeature } from '../types';
 
 const PROVIDER_LABELS: Record<AIProviderName, string> = {
   ollama: 'Ollama',
@@ -123,5 +123,43 @@ export function getModelForProvider(settings: AISettings): string {
       return settings.openaiCompatibleModel || '';
     default:
       return '';
+  }
+}
+
+/**
+ * Returns a copy of `settings` with the model overridden for the given feature.
+ * If per-feature models are disabled or no override is set, returns settings as-is.
+ */
+export function getSettingsForFeature(settings: AISettings, feature: AIFeature): AISettings {
+  if (!settings.perFeatureModels) return settings;
+
+  const overrideMap: Record<AIFeature, string | undefined> = {
+    xray: settings.xrayModelOverride,
+    recap: settings.recapModelOverride,
+    chat: settings.chatModelOverride,
+  };
+
+  const override = overrideMap[feature];
+  if (!override) return settings;
+
+  return applyModelOverride(settings, override);
+}
+
+function applyModelOverride(settings: AISettings, model: string): AISettings {
+  switch (settings.provider) {
+    case 'ollama':
+      return { ...settings, ollamaModel: model };
+    case 'ai-gateway':
+      return { ...settings, aiGatewayModel: model };
+    case 'openai':
+      return { ...settings, openaiModel: model };
+    case 'anthropic':
+      return { ...settings, anthropicModel: model };
+    case 'google':
+      return { ...settings, googleModel: model };
+    case 'openai-compatible':
+      return { ...settings, openaiCompatibleModel: model };
+    default:
+      return settings;
   }
 }

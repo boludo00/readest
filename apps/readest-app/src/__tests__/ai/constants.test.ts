@@ -79,6 +79,10 @@ describe('AISettings Type', () => {
       spoilerProtection: false,
       maxContextChunks: 10,
       indexingMode: 'background',
+      xrayEnabled: true,
+      recapEnabled: true,
+      recapMaxChapters: 0,
+      recapDetailLevel: 'normal',
     };
 
     expect(settings.enabled).toBe(true);

@@ -7,7 +7,7 @@ export function buildEntityExtractionPrompt(
 ): string {
   const existingNote =
     existingEntityNames.length > 0
-      ? `\nAlready identified entities (do NOT duplicate, but you may add new details if you find them): ${existingEntityNames.join(', ')}\n`
+      ? `\nKnown entities in this area (do NOT duplicate, but you may add new details if you find them): ${existingEntityNames.join(', ')}\n`
       : '';
 
   return `You are analyzing a book passage (${passLabel}) to identify key entities.
@@ -17,8 +17,12 @@ Extract entities from the following text. For each entity, provide:
 - type: one of "character", "location", "theme", "term", "event"
 - aliases: other names or nicknames for this entity (array of strings)
 - role: a brief label like "protagonist", "antagonist", "setting", "key concept", etc.
-- description: 2-4 sentences describing the entity based ONLY on the provided text. Be specific: include what the entity DOES, what happens to them, their relationships, key traits, motivations, and any defining moments or actions from the passage
-- connections: names of other entities this one is related to (be thorough — include allies, enemies, family, associates, and anyone they interact with meaningfully)
+- description: 1-2 sentences maximum. Rules by type:
+  • character — lead with WHO they are (identity, profession, role in the story, relationship to key characters). Include distinctive physical appearance or notable personality traits if described. Do NOT narrate plot events.
+  • location — what kind of place it is and why it matters to the story.
+  • event — what happened and who was involved (one sentence).
+  • theme/term — what it means in context of this story (one sentence).
+- connections: names of other entities this one is related to (allies, enemies, family, associates)
 - importance: "major" or "minor"
 
 Return ONLY valid JSON in this format:
@@ -40,11 +44,8 @@ Important rules:
 - Only extract from the provided text, do not use external knowledge
 - Focus on named characters, specific locations, recurring themes, technical terms, and key events
 - For characters, include all name variations as aliases
-- Be selective: only include entities that are meaningful to the story/content
-- Descriptions must be SPECIFIC and DETAILED: mention concrete actions, decisions, conflicts, and outcomes from the text — never use vague phrases like "plays a role" or "is important to the story"
-- For characters, describe their personality, profession/role, key actions, and relationships shown in this passage
-- For locations, describe what happens there and why the place matters
-- For events, describe what happened, who was involved, and the consequences
+- Be selective: only include entities meaningful to the story
+- Keep descriptions SHORT (1-2 sentences) and focused on IDENTITY, not plot events
 - Return valid JSON only, no markdown fences, no extra text
 
 <TEXT>

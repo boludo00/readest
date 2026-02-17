@@ -61,7 +61,15 @@ export interface AISettings {
   recapEnabled: boolean;
   recapMaxChapters: number; // 0 = all chapters, N = last N chapters
   recapDetailLevel: 'brief' | 'normal' | 'detailed';
+
+  // Per-feature model overrides (empty string = use main model)
+  perFeatureModels?: boolean;
+  xrayModelOverride?: string;
+  recapModelOverride?: string;
+  chatModelOverride?: string;
 }
+
+export type AIFeature = 'xray' | 'recap' | 'chat';
 
 // --- X-Ray Entity Types ---
 
@@ -97,6 +105,8 @@ export interface BookEntityIndex {
   totalSections: number;
   complete: boolean;
   progressPercent: number;
+  maxExtractedSection?: number;
+  /** @deprecated Use maxExtractedSection instead */
   maxExtractedPage?: number;
 }
 

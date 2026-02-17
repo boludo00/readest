@@ -8,6 +8,7 @@ import {
   getApiKeyForProvider,
   getModelForProvider,
   getAIConfigError,
+  getSettingsForFeature,
 } from '../utils/providerHelpers';
 import { getModelForPlatform } from '../utils/iosModelFactory';
 import type { AISettings, BookEntity, ScoredChunk } from '../types';
@@ -74,7 +75,8 @@ export function createTauriAdapter(getOptions: () => TauriAdapterOptions): ChatM
   return {
     async *run({ messages, abortSignal }): AsyncGenerator<ChatModelRunResult> {
       const options = getOptions();
-      const { settings, bookHash, bookTitle, authorName, currentPage } = options;
+      const { bookHash, bookTitle, authorName, currentPage } = options;
+      const settings = getSettingsForFeature(options.settings, 'chat');
 
       // Validate provider configuration before making any API calls
       const configError = getAIConfigError(settings);
