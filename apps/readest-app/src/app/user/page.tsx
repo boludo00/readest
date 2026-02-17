@@ -238,8 +238,9 @@ const ProfilePage = () => {
     );
   }
 
-  const avatarUrl = user?.user_metadata?.['picture'] || user?.user_metadata?.['avatar_url'];
-  const userFullName = user?.user_metadata?.['full_name'] || '-';
+  const prefs = user?.prefs as Record<string, string> | undefined;
+  const avatarUrl = prefs?.['picture'] || prefs?.['avatar_url'];
+  const userFullName = user?.name || '-';
   const userEmail = user?.email || '';
   const userPlanDetails =
     getPlanDetails(userProfilePlan, availablePlans) || getPlanDetails('free', availablePlans);

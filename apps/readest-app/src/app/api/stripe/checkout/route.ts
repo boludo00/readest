@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
 
   const enhancedMetadata = {
     ...metadata,
-    userId: user.id,
+    userId: user.$id,
   };
 
   try {
@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     const { data: customerData } = await supabase
       .from('customers')
       .select('stripe_customer_id')
-      .eq('user_id', user.id)
+      .eq('user_id', user.$id)
       .single();
 
     let customerId;
@@ -35,12 +35,12 @@ export async function POST(request: NextRequest) {
       const customer = await stripe.customers.create({
         email: user.email,
         metadata: {
-          userId: user.id,
+          userId: user.$id,
         },
       });
       customerId = customer.id;
       await supabase.from('customers').insert({
-        user_id: user.id,
+        user_id: user.$id,
         stripe_customer_id: customerId,
       });
     } else {

@@ -16,7 +16,7 @@ export const updateUserStorage = async (userId: string) => {
     }
 
     const totalStorageGB =
-      payments?.reduce((sum, payment) => {
+      payments?.reduce((sum: number, payment: { storage_gb?: number }) => {
         return sum + (payment.storage_gb || 0);
       }, 0) || 0;
 

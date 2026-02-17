@@ -59,7 +59,11 @@ export async function POST(request: Request) {
 
     let purchase: VerifiedPurchase;
     try {
-      purchase = await processPurchaseData(user, verifyParams, verificationResult);
+      purchase = await processPurchaseData(
+        { id: user.$id, email: user.email },
+        verifyParams,
+        verificationResult,
+      );
       if (verificationResult.purchaseData?.acknowledgementState === 0) {
         try {
           await googleIAPVerifier.acknowledgePurchase(verifyParams);

@@ -21,9 +21,9 @@ export async function POST(request: Request) {
 
     const customerId = session.customer as string;
     if (session.payment_status === 'paid' && session.subscription) {
-      await createOrUpdateSubscription(user.id, customerId, session.subscription as string);
+      await createOrUpdateSubscription(user.$id, customerId, session.subscription as string);
     } else if (session.payment_status === 'paid' && session.payment_intent) {
-      await createOrUpdatePayment(user.id, customerId, sessionId);
+      await createOrUpdatePayment(user.$id, customerId, sessionId);
     }
 
     return NextResponse.json({ session });

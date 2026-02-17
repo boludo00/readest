@@ -55,7 +55,10 @@ export async function POST(request: Request) {
     });
 
     try {
-      const purchase: VerifiedPurchase = await processPurchaseData(user, verificationResult);
+      const purchase: VerifiedPurchase = await processPurchaseData(
+        { id: user.$id, email: user.email },
+        verificationResult,
+      );
       return NextResponse.json({
         purchase,
         error: null,
