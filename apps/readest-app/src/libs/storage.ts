@@ -161,11 +161,15 @@ export const downloadFile = async ({
       throw new Error('No download URL available');
     }
 
-    // The download URL now points to our own proxy endpoint and requires auth headers
-    const token = await getAccessToken();
+    // Only inject Readest Bearer token for internal cloud downloads (no explicit url).
+    // External downloads (OPDS, direct file URLs) always provide their own auth via `headers`
+    // and must never have the Bearer token injected — it would overwrite their auth.
     const authHeaders: Record<string, string> = { ...headers };
-    if (token) {
-      authHeaders['Authorization'] = `Bearer ${token}`;
+    if (!url) {
+      const token = await getAccessToken();
+      if (token) {
+        authHeaders['Authorization'] = `Bearer ${token}`;
+      }
     }
 
     if (isWebAppPlatform()) {

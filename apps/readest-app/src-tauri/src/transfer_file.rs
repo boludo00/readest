@@ -120,6 +120,16 @@ pub async fn download_file(
     let client = reqwest::ClientBuilder::new()
         .danger_accept_invalid_certs(skip_ssl_verification.unwrap_or(false))
         .danger_accept_invalid_hostnames(skip_ssl_verification.unwrap_or(false))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            // Default Policy::limited strips Authorization on cross-origin redirects.
+            // Use a custom policy that always follows redirects (up to 10) while
+            // preserving all request headers including Authorization.
+            if attempt.previous().len() >= 10 {
+                attempt.error("too many redirects")
+            } else {
+                attempt.follow()
+            }
+        }))
         .build()?;
     let force_single = single_threaded.unwrap_or(false);
 

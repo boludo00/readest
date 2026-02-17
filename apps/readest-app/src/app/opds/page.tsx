@@ -35,6 +35,7 @@ import {
   probeAuth,
   needsProxy,
   probeFilename,
+  createBasicAuth,
 } from './utils/opdsReq';
 import { READEST_OPDS_USER_AGENT } from '@/services/constants';
 import { FeedView } from './components/FeedView';
@@ -429,7 +430,9 @@ export default function BrowserPage() {
             Accept: '*/*',
           };
           if (username || password) {
-            const authHeader = await probeAuth(url, username, password, useProxy);
+            const authHeader =
+              (await probeAuth(url, username, password, useProxy)) ??
+              (username && password ? createBasicAuth(username, password) : null);
             if (authHeader) {
               headers['Authorization'] = authHeader;
               downloadUrl = useProxy ? getProxiedURL(url, authHeader, true) : url;
@@ -498,26 +501,37 @@ export default function BrowserPage() {
       if (await appService.exists(cachedPath, 'None')) {
         return await appService.getImageURL(cachedPath);
       } else {
-        const useProxy = needsProxy(url);
-        let downloadUrl = useProxy ? getProxiedURL(url, '', true) : url;
-        const headers: Record<string, string> = {};
-        if (username || password) {
-          const authHeader = await probeAuth(url, username, password, useProxy);
-          if (authHeader) {
-            headers['Authorization'] = authHeader;
-            downloadUrl = useProxy ? getProxiedURL(url, authHeader, true) : url;
+        try {
+          const useProxy = needsProxy(url);
+          let downloadUrl = useProxy ? getProxiedURL(url, '', true) : url;
+          const headers: Record<string, string> = {};
+          if (username || password) {
+            // Probe auth type; fall back to Basic when probe returns null
+            // (e.g. only one credential set, or server quirk).
+            // probeAuth is wrapped in the outer try so any fetch error is caught.
+            const authHeader =
+              (await probeAuth(url, username, password, useProxy)) ??
+              (username && password ? createBasicAuth(username, password) : null);
+            if (authHeader) {
+              headers['Authorization'] = authHeader;
+              downloadUrl = useProxy ? getProxiedURL(url, authHeader, true) : url;
+            }
           }
+          await downloadFile({
+            appService,
+            dst: cachedPath,
+            cfp: '',
+            url: downloadUrl,
+            singleThreaded: true,
+            skipSslVerification: true,
+            headers,
+          });
+          return await appService.getImageURL(cachedPath);
+        } catch {
+          // Image download failed (auth error, network, probe failure, etc.)
+          // Return the original URL so next/image can try directly or show a placeholder.
+          return url;
         }
-        await downloadFile({
-          appService,
-          dst: cachedPath,
-          cfp: '',
-          url: downloadUrl,
-          singleThreaded: true,
-          skipSslVerification: true,
-          headers,
-        });
-        return await appService.getImageURL(cachedPath);
       }
     },
     [appService],
