@@ -1,0 +1,49 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build outputs
+.next
+.open-next
+out
+dist
+build
+
+# Tauri
+src-tauri/target
+src-tauri/gen
+
+# Git
+.git
+.gitignore
+
+# Cache
+.turbo
+.cache
+*.log
+
+# Development
+.env.local
+.env.*.local
+.env.tauri
+
+# IDE
+.vscode
+.idea
+.DS_Store
+
+# Testing
+coverage
+.nyc_output
+
+# Large packages
+packages/foliate-js/node_modules
+packages/simplecc-wasm/node_modules
+packages/tauri
+
+# Public vendors
+public/vendor/pdfjs
+public/vendor/simplecc
+
+# Other monorepo packages
+../../packages
