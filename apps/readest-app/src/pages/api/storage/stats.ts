@@ -46,18 +46,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const totalFiles = allFiles.documents.length;
     const totalSize = allFiles.documents.reduce(
-      (sum, doc) => sum + parseInt(doc.file_size || '0', 10),
+      (sum, doc) => sum + parseInt((doc['file_size'] as string) || '0', 10),
       0,
     );
 
     // Group by book_hash
     const grouped = new Map<string | null, { count: number; size: number }>();
     for (const doc of allFiles.documents) {
-      const key = doc.book_hash || null;
+      const key = (doc['book_hash'] as string) || null;
       const current = grouped.get(key) || { count: 0, size: 0 };
       grouped.set(key, {
         count: current.count + 1,
-        size: current.size + parseInt(doc.file_size || '0', 10),
+        size: current.size + parseInt((doc['file_size'] as string) || '0', 10),
       });
     }
 

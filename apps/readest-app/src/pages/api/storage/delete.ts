@@ -42,13 +42,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const fileRecord = result.documents[0]!;
-    if (fileRecord.user_id !== user.$id) {
+    if (fileRecord['user_id'] !== user.$id) {
       return res.status(403).json({ error: 'Unauthorized access to the file' });
     }
 
     // Delete from Appwrite Storage
     try {
-      await storage.deleteFile(APPWRITE_BUCKET_ID, fileRecord.storage_file_id);
+      await storage.deleteFile(APPWRITE_BUCKET_ID, fileRecord['storage_file_id']);
     } catch (error) {
       console.warn('Storage file may already be deleted:', error);
     }

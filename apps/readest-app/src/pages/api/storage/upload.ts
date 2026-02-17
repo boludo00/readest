@@ -48,7 +48,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     ]);
 
     const currentUsage = existingFiles.documents.reduce(
-      (sum, doc) => sum + parseInt(doc.file_size || '0', 10),
+      (sum, doc) => sum + parseInt((doc['file_size'] as string) || '0', 10),
       0,
     );
 
@@ -73,7 +73,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (existingRecord.documents.length > 0) {
       const doc = existingRecord.documents[0]!;
       docId = doc.$id;
-      storageFileId = doc.storage_file_id;
+      storageFileId = doc['storage_file_id'] as string;
       // Update file size
       await databases.updateDocument(APPWRITE_DATABASE_ID, COLLECTIONS.FILES, docId, {
         file_size: String(fileSize),

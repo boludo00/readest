@@ -52,7 +52,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let query = supabase
       .from('files')
       .select('file_key, file_size, book_hash, created_at, updated_at', { count: 'exact' })
-      .eq('user_id', user.id)
+      .eq('user_id', user.$id)
       .is('deleted_at', null);
 
     if (bookHash) {
@@ -83,7 +83,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Get all book_hashes from the paginated results
     const bookHashes = Array.from(
-      new Set((files || []).map((f) => f.book_hash).filter((hash): hash is string => !!hash)),
+      new Set(
+        (files || [])
+          .map((f: FileRecord) => f.book_hash)
+          .filter((hash: string | null): hash is string => !!hash),
+      ),
     );
 
     // Fetch all files with the same book_hashes to ensure complete book groups
@@ -95,15 +99,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const relatedQuery = supabase
         .from('files')
         .select('file_key, file_size, book_hash, created_at, updated_at')
-        .eq('user_id', user.id)
+        .eq('user_id', user.$id)
         .is('deleted_at', null)
         .in('book_hash', bookHashes);
 
       const { data: relatedFiles, error: relatedError } = await relatedQuery;
 
       if (!relatedError && relatedFiles) {
-        const fileMap = new Map(allRelatedFiles.map((f) => [f.file_key, f]));
-        relatedFiles.forEach((f) => fileMap.set(f.file_key, f));
+        const fileMap = new Map(allRelatedFiles.map((f: FileRecord) => [f.file_key, f]));
+        relatedFiles.forEach((f: FileRecord) => fileMap.set(f.file_key, f));
         allRelatedFiles = Array.from(fileMap.values());
       }
     }

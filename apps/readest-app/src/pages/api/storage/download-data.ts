@@ -29,17 +29,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { databases, storage } = createAppwriteAdminClient();
 
     const fileRecord = await databases.getDocument(APPWRITE_DATABASE_ID, COLLECTIONS.FILES, docId);
-    if (fileRecord.user_id !== user.$id) {
+    if (fileRecord['user_id'] !== user.$id) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    const storageFileId = fileRecord.storage_file_id;
+    const storageFileId = fileRecord['storage_file_id'] as string;
 
     // Get file metadata for Content-Length header
     const fileMeta = await storage.getFile(APPWRITE_BUCKET_ID, storageFileId);
     const fileBuffer = await storage.getFileDownload(APPWRITE_BUCKET_ID, storageFileId);
 
-    const fileName = fileRecord.file_key.split('/').pop() || 'book';
+    const fileName = (fileRecord['file_key'] as string).split('/').pop() || 'book';
 
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Content-Length', fileMeta.sizeOriginal);

@@ -45,7 +45,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     // Verify the file record exists and belongs to this user
     const fileRecord = await databases.getDocument(APPWRITE_DATABASE_ID, COLLECTIONS.FILES, docId);
-    if (fileRecord.user_id !== user.$id) {
+    if (fileRecord['user_id'] !== user.$id) {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
@@ -54,8 +54,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: 'Empty body' });
     }
 
-    const storageFileId = fileRecord.storage_file_id;
-    const fileName = fileRecord.file_key.split('/').pop() || 'book';
+    const storageFileId = fileRecord['storage_file_id'] as string;
+    const fileName = (fileRecord['file_key'] as string).split('/').pop() || 'book';
 
     // Delete existing file if re-uploading
     try {
@@ -66,7 +66,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Use Node.js File API (node-appwrite expects a File object)
-    const file = new File([body], fileName);
+    const file = new File([new Uint8Array(body)], fileName);
     await storage.createFile(APPWRITE_BUCKET_ID, storageFileId, file);
 
     return res.status(200).json({ ok: true });

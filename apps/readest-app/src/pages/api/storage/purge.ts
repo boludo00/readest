@@ -61,14 +61,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // Process deletions
     const deleteResults = await Promise.allSettled(
       result.documents.map(async (doc) => {
-        if (doc.user_id !== user.$id) {
-          return { fileKey: doc.file_key as string, success: false, error: 'Unauthorized' };
+        if (doc['user_id'] !== user.$id) {
+          return { fileKey: doc['file_key'] as string, success: false, error: 'Unauthorized' };
         }
 
         try {
           // Delete from Appwrite Storage
           try {
-            await storage.deleteFile(APPWRITE_BUCKET_ID, doc.storage_file_id);
+            await storage.deleteFile(APPWRITE_BUCKET_ID, doc['storage_file_id'] as string);
           } catch {
             // File may already be deleted from storage
           }
@@ -76,10 +76,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           // Delete the database record
           await databases.deleteDocument(APPWRITE_DATABASE_ID, COLLECTIONS.FILES, doc.$id);
 
-          return { fileKey: doc.file_key as string, success: true };
+          return { fileKey: doc['file_key'] as string, success: true };
         } catch (error) {
           return {
-            fileKey: doc.file_key as string,
+            fileKey: doc['file_key'] as string,
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error',
           };
@@ -106,7 +106,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Track files not found in database
-    const foundFileKeys = new Set(result.documents.map((doc) => doc.file_key as string));
+    const foundFileKeys = new Set(result.documents.map((doc) => doc['file_key'] as string));
     for (const key of fileKeys) {
       if (!foundFileKeys.has(key)) {
         failed.push({ fileKey: key, error: 'File not found or already deleted' });
